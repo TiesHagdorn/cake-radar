@@ -95,7 +95,7 @@ def handle_message(message, say):
 
             # Cross-post the message URL to #241017-incident-store-cake
             try:
-                say(channel="#241017-incident-store-cake", text=full_message)
+                say(channel="#cake-radar", text=full_message)
             except Exception as e:
                 print(f"Error sending message to channel: {e}")
 
