@@ -37,7 +37,18 @@ flask_app = Flask(__name__)
 handler = SlackRequestHandler(app)
 
 # Keywords to search for in messages
-KEYWORDS = ["candy", "cake", "treat", "snack", "praline"]
+KEYWORDS = [
+    "candy", "cake", "treat", "snack", "praline", 
+    "banana bread", "marzipan", "baklava", 
+    "brownie", "muffin", "cookie", "donut", 
+    "croissant", "pastry", "macaron", "eclair", 
+    "tart", "pie", "pudding", "truffle", 
+    "cheesecake", "fudge", "cupcake", "chocolate",
+    "biscuit", "caramel", "gelato", "nougat", 
+    "scone", "strudel", "sweetbread", "waffle", 
+    "pancake", "crumble", "gingerbread",
+    "anniversary", "celebration", "vacation", "holiday", "birthday"
+]
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
 ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
 
