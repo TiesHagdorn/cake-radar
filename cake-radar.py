@@ -34,6 +34,7 @@ if not all([SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_K
 app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 flask_app = Flask(__name__)
+flask_app.logger.disabled = True
 handler = SlackRequestHandler(app)
 
 # Suppress Flask's default HTTP access logs
@@ -63,11 +64,15 @@ def assess_certainty(message_text: str) -> Optional[Tuple[str, int]]:
         response = client.chat.completions.create(
             messages=[
                 {
+                    "role": "system",
+                    "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a treat or gift, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100) for the following message."
+                },
+                {
                     "role": "user",
-                    "content": f"Respond with 'yes' or 'no' and include certainty level in percentage (0-100) for the following message: '{message_text}'"
+                    "content": f"Respond with 'yes' or 'no' and include certainty level in percentage (0-100) that represents how likely you are that the message is, or is not, about a colleague offering a treat for colleagues. This is the messages to assess: '{message_text}'"
                 }
             ],
-            model="gpt-3.5-turbo",
+            model="gpt-4.0-mini",
         )
 
         # Example response format: "yes, 85%"
