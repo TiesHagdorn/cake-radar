@@ -62,18 +62,17 @@ def assess_certainty(message_text: str) -> Optional[Tuple[str, int]]:
     """Assess the likelihood of the message being about offering something."""
     try:
         response = client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a treat or gift, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100) for the following message."
-                },
+                {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a treat or gift, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
                 {
                     "role": "user",
-                    "content": f"Respond with 'yes' or 'no' and include certainty level in percentage (0-100) that represents how likely you are that the message is, or is not, about a colleague offering a treat for colleagues. This is the messages to assess: '{message_text}'"
+                    "content": f"Respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering a treat for colleagues. This is the messages to assess: '{message_text}'"
                 }
-            ],
-            model="gpt-4",
+            ]
+        
         )
+
 
         # Example response format: "yes, 85%"
         assessment = response.choices[0].message.content.strip().lower()
