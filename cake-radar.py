@@ -46,7 +46,7 @@ KEYWORDS = [
     "cheesecake", "fudge", "cupcake", "chocolate",
     "biscuit", "caramel", "gelato", "nougat", 
     "scone", "strudel", "sweetbread", "waffle", 
-    "pancake", "crumble", "gingerbread",
+    "pancake", "crumble", "gingerbread", "djupur",
     "anniversary", "celebration", "vacation", "holiday", "birthday"
 ]
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
