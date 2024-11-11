@@ -36,6 +36,10 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 flask_app = Flask(__name__)
 handler = SlackRequestHandler(app)
 
+# Suppress Flask's default HTTP access logs
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 # Keywords to search for in messages
 KEYWORDS = [
     "candy", "cake", "treat", "snack", "praline", 
@@ -77,16 +81,15 @@ def assess_certainty(message_text: str) -> Optional[Tuple[str, int]]:
         print(f"Error assessing message certainty: {e}")
         return None, 0
 
-# Helper function to construct Slack message URL
-def construct_message_url(channel_id: str, ts: str) -> str:
-    return f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
-
 # Listen for messages and check for keywords
 @app.message()
 def handle_message(message, say):
     text = message.get('text', '').lower()
     channel_id = message['channel']
     ts = message['ts']  # Timestamp of the message
+
+    # Log the incoming message text
+    logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
 
     # Check for keywords using regex
     if any(re.search(rf"\b{keyword}\b", text) for keyword in ALL_KEYWORDS):
@@ -99,14 +102,14 @@ def handle_message(message, say):
         # Only cross-post if the assessment is 'yes' and certainty is over 75%
         if assessment and "yes" in assessment and certainty > 74:
             # Construct the message URL
-            message_url = construct_message_url(channel_id, ts)
+            message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
 
             # Create the full message with certainty percentage
             full_message = f":green-light-blinker: *<{message_url}|Cake Alert!>* (Certainty: {certainty}%)"
 
             # Cross-post the message URL to #241017-incident-store-cake
             try:
-                say(channel="#cake-radar", text=full_message)
+                say(channel="#241017-incident-store-cake", text=full_message)
             except Exception as e:
                 print(f"Error sending message to channel: {e}")
 
