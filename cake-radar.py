@@ -72,7 +72,7 @@ def assess_certainty(message_text: str) -> Optional[Tuple[str, int]]:
                     "content": f"Respond with 'yes' or 'no' and include certainty level in percentage (0-100) that represents how likely you are that the message is, or is not, about a colleague offering a treat for colleagues. This is the messages to assess: '{message_text}'"
                 }
             ],
-            model="gpt-4.0-mini",
+            model="gpt-4",
         )
 
         # Example response format: "yes, 85%"
