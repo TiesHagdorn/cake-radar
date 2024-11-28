@@ -47,7 +47,7 @@ KEYWORDS = [
     "banana bread", "marzipan", "baklava", 
     "brownie", "muffin", "cookie", "donut", 
     "croissant", "pastry", "macaron", "eclair", 
-    "tart", "pie", "pudding", "truffle", 
+    "tart", "pie", "pudding", "truffle", "kitkat",
     "cheesecake", "fudge", "cupcake", "chocolate",
     "biscuit", "caramel", "gelato", "nougat", 
     "scone", "strudel", "sweetbread", "waffle", 
