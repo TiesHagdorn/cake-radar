@@ -95,6 +95,11 @@ def handle_message(message, say):
     # Log the incoming message text
     logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
 
+    # Check if the message is from the #cake-radar channel
+    if channel_id == "C07RTPCLAKC":
+        logging.info("Message from #cake-radar channel ignored.")
+        return
+
     # Check for keywords using regex
     if any(re.search(rf"\b{keyword}\b", text) for keyword in ALL_KEYWORDS):
         # Assess the certainty of the message
@@ -103,15 +108,15 @@ def handle_message(message, say):
         # Log the assessment and certainty level to the terminal
         logging.info(f"Assessed Message: '{text}', Assessment: {assessment}, Certainty: {certainty}%")
 
-        # Only cross-post if the assessment is 'yes' and certainty is over 75%
+        # Only cross-post if the assessment is 'yes' and certainty is high.
         if assessment and "yes" in assessment and certainty > 74:
-            # Construct the message URL
+            # Construct the message URL to crosspost
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
 
             # Create the full message with certainty percentage
             full_message = f":green-light-blinker: *<{message_url}|Cake Alert!>* (Certainty: {certainty}%)"
 
-            # Cross-post the message URL to #241017-incident-store-cake
+            # Cross-post the message to #cake-radar
             try:
                 say(channel="#cake-radar", text=full_message)
             except Exception as e:
