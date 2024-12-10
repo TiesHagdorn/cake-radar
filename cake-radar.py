@@ -109,7 +109,7 @@ def handle_message(message, say):
         logging.info(f"Assessed Message: '{text}', Assessment: {assessment}, Certainty: {certainty}%")
 
         # Only cross-post if the assessment is 'yes' and certainty is high.
-        if assessment and "yes" in assessment and certainty > 74:
+        if assessment and "yes" in assessment and certainty > 85:
             # Construct the message URL to crosspost
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
 
