@@ -99,9 +99,15 @@ def handle_message(message, say):
     text = message.get('text', '').lower()
     channel_id = message['channel']
     ts = message['ts']  # Timestamp of the message
+    thread_ts = message.get('thread_ts')  # Check if the message is a thread reply
 
     # Log the incoming message text
     logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
+
+    # Exclude messages in threads
+    if thread_ts and thread_ts != ts:
+        logging.info("Message is a thread reply and will be ignored.")
+        return
 
     # Check if the message is from the #cake-radar channel
     if channel_id == "C07RTPCLAKC":
