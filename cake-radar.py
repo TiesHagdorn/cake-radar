@@ -43,17 +43,25 @@ log.setLevel(logging.ERROR)
 
 # Keywords to search for in messages
 KEYWORDS = [
-    "candy", "cake", "treat", "snack", "praline", 
-    "banana bread", "marzipan", "baklava", 
-    "brownie", "muffin", "cookie", "donut", 
-    "croissant", "pastry", "macaron", "eclair", 
-    "tart", "pie", "pudding", "truffle", "kitkat",
-    "cheesecake", "fudge", "cupcake", "chocolate",
-    "biscuit", "caramel", "gelato", "nougat", 
-    "scone", "strudel", "sweetbread", "waffle", "liquorice",
-    "pancake", "crumble", "gingerbread", "djupur", "spekulaas", "speculaas",
-    "anniversary", "celebration", "vacation", "holiday", "birthday"
+    "anniversary", "appelgebak", "appeltaart", "arnhemse meisjes", "baklava", "babka", 
+    "banana bread", "beignet", "birthday", "biscuit", "black forest", "blondie", 
+    "bonbon", "brandy snap", "brownie", "buche de noel", "cake", "cannoli", 
+    "caramel", "carrot cake", "celebration", "cheesecake", "chocolade", "chocolate", 
+    "chocolate bar", "churros", "clafoutis", "cookie", "crumble", "croissant", 
+    "croquembouche", "cupcake", "danish", "djupur", "donut", "duivekater", 
+    "easter egg", "eclair", "fritter", "fudge", "galette", "gateau", "gelato", 
+    "gingerbread", "gummy bear", "honeycomb", "jellybean", "kitkat", "koulouri", 
+    "krentenbrood", "krentenbol", "kruidkoek", "lemon drizzle", "liquorice", 
+    "macaron", "malteser", "marsepein", "marzipan", "meringue", "mochi", 
+    "muffin", "nougat", "oliebol", "ontbijtkoek", "panettone", "parfait", 
+    "pastry", "pancake", "pavlova", "pie", "poffertjes", "pudding", 
+    "profiterole", "praline", "red velvet", "rocky road", "roomboterkoek", 
+    "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
+    "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", 
+    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", 
+    "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole"
 ]
+
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
 ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
 
