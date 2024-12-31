@@ -49,16 +49,16 @@ KEYWORDS = [
     "caramel", "carrot cake", "celebration", "cheesecake", "chocolade", "chocolate", 
     "chocolate bar", "churros", "clafoutis", "cookie", "crumble", "croissant", 
     "croquembouche", "cupcake", "danish", "djupur", "donut", "duivekater", 
-    "easter egg", "eclair", "fritter", "fudge", "galette", "gateau", "gelato", 
+    "easter egg", "eclair", "fritter", "fudge", "galette", "gateau", "gelato",
     "gingerbread", "gummy bear", "honeycomb", "jellybean", "kitkat", "koulouri", 
     "krentenbrood", "krentenbol", "kruidkoek", "lemon drizzle", "liquorice", 
     "macaron", "malteser", "marsepein", "marzipan", "meringue", "mochi", 
-    "muffin", "nougat", "oliebol", "ontbijtkoek", "panettone", "parfait", 
+    "muffin", "nougat", "oliebol", "oliebollen", "ontbijtkoek", "panettone", "parfait", 
     "pastry", "pancake", "pavlova", "pie", "poffertjes", "pudding", 
     "profiterole", "praline", "red velvet", "rocky road", "roomboterkoek", 
     "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
     "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", 
-    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", 
+    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
     "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole"
 ]
 
@@ -115,7 +115,7 @@ def handle_message(message, say):
         return
 
     # Check for keywords using regex
-    if any(re.search(rf"\b{keyword}\b", text) for keyword in ALL_KEYWORDS):
+    if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in KEYWORDS):
         # Assess the certainty of the message
         assessment, certainty = assess_certainty(text)
 
