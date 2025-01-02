@@ -66,7 +66,7 @@ KEYWORDS = [
 ]
 
 # Function to assess certainty of the text and image in context
-def assess_text_and_image_in_context(message_text: str, image_data: Optional[bytes]) -> Tuple[int, int, bool]:
+def assess_text_and_image_in_context(message_text: str, message_image_url: str) -> Tuple[int, int, bool]:
     text_certainty = 0
     image_certainty = 0
     cross_post = False
