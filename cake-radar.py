@@ -131,7 +131,7 @@ def handle_message(message, say):
 
 
     # Assess the message and image in context
-    text_certainty, image_certainty, should_cross_post = assess_text_and_image_in_context(text, image_data)
+    text_certainty, image_certainty, should_cross_post = assess_text_and_image_in_context(text, message_image_url)
 
     # Log certainty values
     logging.info(
