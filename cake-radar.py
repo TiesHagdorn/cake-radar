@@ -70,7 +70,7 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
     cross_post = False
 
     try:
-        image_data_url = message_image_url if message_image_url else "data:,"
+        message_image_url = message_image_url if message_image_url else ""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
