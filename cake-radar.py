@@ -106,9 +106,6 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
             max_tokens=300,
             messages=messages
         )
-        
-         # Debug: Print assessment
-        print(f"Assessment: {assessment}")
 
         # Parse the response (assuming OpenAI returns both text and image certainties)
         assessment = response.choices[0].message.content.strip().lower()
@@ -120,9 +117,9 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
             components = assessment.split(',')
             for component in components:
                 if 'message certainty is' in component:
-                    text_certainty = int(component.split(' message certainty is ')[-1].replace('%', '').strip())
+                    text_certainty = int(component.split('message certainty is')[-1].replace('%', '').strip())
                 if 'image certainty is' in component:
-                    image_certainty = int(component.split(' image certainty is ')[-1].replace('%', '').strip())
+                    image_certainty = int(component.split('image certainty is')[-1].replace('%', '').strip())
 
         logging.info(f"Text Certainty: {text_certainty}%, Image Certainty: {image_certainty}%")
 
