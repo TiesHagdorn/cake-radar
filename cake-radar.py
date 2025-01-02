@@ -3,16 +3,16 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from flask import Flask, request
 from openai import OpenAI
 import logging
-import os
-import requests
-from dotenv import load_dotenv
+import re
 from typing import Optional, Tuple
+from dotenv import load_dotenv
+import os
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[
                         logging.FileHandler("cake-radar.log"),  # Log to a file
@@ -58,118 +58,85 @@ KEYWORDS = [
     "profiterole", "praline", "red velvet", "rocky road", "roomboterkoek", 
     "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
     "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", 
-    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "truffle", 
-    "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "treat", "snack", 
-    "dessert", "sweets", "kitchen area", "brought some"
+    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
+    "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole"
 ]
 
-# Function to assess certainty of the text and image in context
-def assess_text_and_image_in_context(message_text: str, message_image_url: Optional[str]) -> Tuple[int, int, bool]:
-    text_certainty = 0
-    image_certainty = 0
-    cross_post = False
+PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
+ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
 
+# Function to assess certainty of the message
+def assess_certainty(message_text: str) -> Optional[Tuple[str, int]]:
+    """Assess the likelihood of the message being about offering something."""
     try:
-        # Prepare the messages with the text content and conditionally add the image URL
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
-            {
-                "role": "user",
-                "content": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat.(like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainty is 60%'. This is the message to assess: '{message_text}'"
-            }
-        ]
-        
-        if message_image_url:  # Add image_url directly if it exists
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering an edible treat, such as cake or snacks."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat.(like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainty is 60%'. This is the message to assess: '{message_text}'"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": message_image_url,
-                                "detail": "low",
-                            }
-                        }
-                    ]
-                }
-            ]
-            
-
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            max_tokens=300,
-            messages=messages
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
+                {
+                    "role": "user",
+                    "content": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'.  If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. This is the messages to assess: '{message_text}'"
+                }
+            ]
+        
         )
 
-        # Debug: Print assessment
-        print(f"Message URL: {message_image_url}")
 
-
-        # Debug: Print response
-        print(f"OpenAI Response: {response}")
-
-        # Parse the response (assuming OpenAI returns both text and image certainties)
+        # Example response format: "yes, 85%"
         assessment = response.choices[0].message.content.strip().lower()
-        
-        # Debug: Print assessment
-        print(f"Assessment: {assessment}")
-
-        if 'message certainty is' in assessment and 'image certainty is' in assessment:
-            components = assessment.split(',')
-            for component in components:
-                if 'message certainty is' in component:
-                    text_certainty = int(component.split('message certainty is')[-1].replace('%', '').strip())
-                if 'image certainty is' in component:
-                    image_certainty = int(component.split('image certainty is')[-1].replace('%', '').strip())
-
-        logging.info(f"Text Certainty: {text_certainty}%, Image Certainty: {image_certainty}%")
-
-        if text_certainty >= 85 or image_certainty >= 85:
-            cross_post = True
-
+        if ',' in assessment:
+            decision, certainty_str = assessment.split(',')
+            certainty = int(certainty_str.strip().replace('%', ''))  # Convert percentage string to int
+            return decision.strip(), certainty
+        return assessment, 0  # Default to 0% if no certainty is provided
     except Exception as e:
-        logging.error(f"Error assessing text and image: {e}")
+        print(f"Error assessing message certainty: {e}")
+        return None, 0
 
-    return text_certainty, image_certainty, cross_post
-
-# Message handler
+# Listen for messages and check for keywords
 @app.message()
 def handle_message(message, say):
     text = message.get('text', '').lower()
-    files = message.get('files', [])
+    channel_id = message['channel']
+    ts = message['ts']                          # Timestamp of the message
+    thread_ts = message.get('thread_ts')        # Check if the message is a thread reply
+    files = message.get('files', [])            # Get the files field
 
-    message_image_url = None
-    for file in files:
-        if file.get("mimetype", "").startswith("image/"):
-            message_image_url = file["url_private"]
-            break
 
-    # Debug: Print the image URL
-    print(f"Image URL: {message_image_url}")
+    # Log the incoming message text
+    logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
 
-    # Assess the message and image in context
-    text_certainty, image_certainty, should_cross_post = assess_text_and_image_in_context(text, message_image_url)
+    # Exclude messages in threads
+    if thread_ts and thread_ts != ts:
+        logging.info("Message is a thread reply and will be ignored.")
+        return
 
-    # Log certainty values
-    logging.info(
-        f"Text Certainty: {text_certainty}%, Image Certainty: {image_certainty}%, Cross-Post: {should_cross_post}"
-    )
+    # Check if the message is from the #cake-radar channel
+    if channel_id == "C07RTPCLAKC":
+        logging.info("Message from #cake-radar channel ignored.")
+        return
 
-    # Cross-post if justified
-    if should_cross_post:
-        message_url = f"https://slack.com/archives/{message['channel']}/p{message['ts'].replace('.', '')}"
-        full_message = (
-            f":green-light-blinker: *<{message_url}|Cake Alert!>*\n"
-            f"- Text Certainty: {text_certainty}%\n"
-            f"- Image Certainty: {image_certainty}%"
-        )
-        say(channel="#241126-incident-cake", text=full_message)
+    # Check for keywords using regex
+    if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in KEYWORDS):
+        # Assess the certainty of the message
+        assessment, certainty = assess_certainty(text)
+
+        # Log the assessment and certainty level to the terminal
+        logging.info(f"Assessed Message: '{text}', Assessment: {assessment}, Certainty: {certainty}%")
+
+        # Only cross-post if the assessment is 'yes' and certainty is high.
+        if assessment and "yes" in assessment and certainty > 85:
+            # Construct the message URL to crosspost
+            message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
+
+            # Create the full message with certainty percentage
+            full_message = f":green-light-blinker: *<{message_url}|Cake Alert!>* (Certainty: {certainty}%)"
+
+            # Cross-post the message to #cake-radar
+            try:
+                say(channel="#cake-radar", text=full_message)
+            except Exception as e:
+                print(f"Error sending message to channel: {e}")
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
