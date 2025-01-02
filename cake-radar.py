@@ -3,11 +3,10 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from flask import Flask, request
 from openai import OpenAI
 import logging
-import re
-from typing import Optional, Tuple
-from dotenv import load_dotenv
 import os
 import requests
+from dotenv import load_dotenv
+from typing import Optional, Tuple
 
 # Load environment variables from .env file
 load_dotenv()
@@ -66,12 +65,11 @@ KEYWORDS = [
 ]
 
 # Function to assess certainty of the text and image in context
-def assess_text_and_image_in_context(message_text: str, message_image_url: str) -> Tuple[int, int, bool]:
+def assess_text_and_image_in_context(message_text: str, message_image_url: Optional[str]) -> Tuple[int, int, bool]:
     text_certainty = 0
     image_certainty = 0
     cross_post = False
 
-    # Send the text and image data in a single request
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -125,14 +123,12 @@ def handle_message(message, say):
     text = message.get('text', '').lower()
     files = message.get('files', [])
 
-    # Check if there's an image
-    image_data = None
+    message_image_url = None
     for file in files:
         if file.get("mimetype", "").startswith("image/"):
-            response = requests.get(file["url_private"], headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"})
-            response.raise_for_status()
-            message_image_url = response.content
+            message_image_url = file["url_private"]
             break
+
 
     # Assess the message and image in context
     text_certainty, image_certainty, should_cross_post = assess_text_and_image_in_context(text, image_data)
