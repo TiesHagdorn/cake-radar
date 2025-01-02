@@ -106,20 +106,26 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
             max_tokens=300,
             messages=messages
         )
+        
+         # Debug: Print assessment
+        print(f"Assessment: {assessment}")
 
         # Parse the response (assuming OpenAI returns both text and image certainties)
         assessment = response.choices[0].message.content.strip().lower()
-        if ',' in assessment:
-            text_certainty_str, image_certainty_str = assessment.split(',')
-            text_certainty = int(text_certainty_str.replace('%', '').strip())
-            image_certainty = int(image_certainty_str.replace('%', '').strip())
-        else:
-            text_certainty = 0
-            image_certainty = 0
+        
+        # Debug: Print assessment
+        print(f"Assessment: {assessment}")
+
+        if 'message certainty is' in assessment and 'image certainty is' in assessment:
+            components = assessment.split(',')
+            for component in components:
+                if 'message certainty is' in component:
+                    text_certainty = int(component.split(' message certainty is ')[-1].replace('%', '').strip())
+                if 'image certainty is' in component:
+                    image_certainty = int(component.split(' image certainty is ')[-1].replace('%', '').strip())
 
         logging.info(f"Text Certainty: {text_certainty}%, Image Certainty: {image_certainty}%")
 
-        # Cross-post if either certainty is 85% or higher
         if text_certainty >= 85 or image_certainty >= 85:
             cross_post = True
 
