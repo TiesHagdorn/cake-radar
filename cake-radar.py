@@ -88,7 +88,7 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: str) 
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": {message_image_url},
+                                "url": message_image_url,
                                 "detail": "low",
                             }
                         }
