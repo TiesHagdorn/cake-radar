@@ -107,6 +107,13 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
             messages=messages
         )
 
+        # Debug: Print assessment
+        print(f"Message URL: {message_image_url}")
+
+
+        # Debug: Print response
+        print(f"OpenAI Response: {response}")
+
         # Parse the response (assuming OpenAI returns both text and image certainties)
         assessment = response.choices[0].message.content.strip().lower()
         
