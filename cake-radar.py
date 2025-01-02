@@ -70,20 +70,25 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
     cross_post = False
 
     try:
-        message_image_url = message_image_url if message_image_url else ""
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=300,
+        # Prepare the messages with the text content and conditionally add the image URL
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
+            {
+                "role": "user",
+                "content": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat.(like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainty is 60%'. This is the message to assess: '{message_text}'"
+            }
+        ]
+        
+        if message_image_url:  # Add image_url directly if it exists
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering an edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."
+                    "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering an edible treat, such as cake or snacks."
                 },
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainty is 60%'. This is the message to assess: '{message_text}'"},
+                        {"type": "text", "text": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat.(like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainty is 60%'. This is the message to assess: '{message_text}'"},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -94,8 +99,13 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: Optio
                     ]
                 }
             ]
-        )
+            
 
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=300,
+            messages=messages
+        )
 
         # Parse the response (assuming OpenAI returns both text and image certainties)
         assessment = response.choices[0].message.content.strip().lower()
