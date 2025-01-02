@@ -71,19 +71,31 @@ def assess_text_and_image_in_context(message_text: str, image_data: Optional[byt
     image_certainty = 0
     cross_post = False
 
-    # Prepare the message to send to OpenAI
-    messages = [
-        {"role": "system", "content": "You are an assistant that evaluates Slack messages for mentions of edible treats like cake or snacks. Respond with 'yes' or 'no' and include certainty levels in percentage (0-100%) for both the text and the image."},
-        {"role": "user", "content": f"Text: {message_text}. Analyze the following image in the context of the provided text:"}
-    ]
-
     # Send the text and image data in a single request
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",  # Assuming gpt-4-vision model supports this functionality
-            messages=messages,
-            files=[{"file": image_data, "purpose": "vision"}] if image_data else [],
-        )
+            max_tokens=300,
+            messages=[
+                {
+                    "role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
+
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'.  If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainity is 60%'. This is the messages to assess: '{message_text}'"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": {message_image_url},
+                                "detail": "low",
+                            },
+                        },
+                    ],
+                }
+            ]
+            )
+
 
         # Parse the response (assuming OpenAI returns both text and image certainties)
         assessment = response.choices[0].message.content.strip().lower()
@@ -118,7 +130,7 @@ def handle_message(message, say):
         if file.get("mimetype", "").startswith("image/"):
             response = requests.get(file["url_private"], headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"})
             response.raise_for_status()
-            image_data = response.content
+            message_image_url = response.content
             break
 
     # Assess the message and image in context
