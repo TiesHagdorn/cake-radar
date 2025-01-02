@@ -58,10 +58,9 @@ KEYWORDS = [
     "profiterole", "praline", "red velvet", "rocky road", "roomboterkoek", 
     "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
     "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", 
-    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
-    "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole"
-    "cake", "treat", "cookie", "brownie", "snack", "pie", "muffin", "dessert", "sweets",
-    "pudding", "chocolate", "anniversary", "birthday", "celebration"
+    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "truffle", 
+    "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "treat", "snack", 
+    "dessert", "sweets", "kitchen area", "brought some"
 ]
 
 # Function to assess certainty of the text and image in context
@@ -129,6 +128,8 @@ def handle_message(message, say):
             message_image_url = file["url_private"]
             break
 
+    # Debug: Print the image URL
+    print(f"Image URL: {message_image_url}")
 
     # Assess the message and image in context
     text_certainty, image_certainty, should_cross_post = assess_text_and_image_in_context(text, message_image_url)
