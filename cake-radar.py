@@ -74,27 +74,28 @@ def assess_text_and_image_in_context(message_text: str, message_image_url: str) 
     # Send the text and image data in a single request
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Assuming gpt-4-vision model supports this functionality
+            model="gpt-4o-mini",
             max_tokens=300,
             messages=[
                 {
-                    "role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
-
+                    "role": "system", 
+                    "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering an edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."
+                },
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'.  If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainity is 60%'. This is the messages to assess: '{message_text}'"},
+                        {"type": "text", "text": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format: 'yes, message certainty is 85%, image certainty is 60%'. This is the message to assess: '{message_text}'"},
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": {message_image_url},
                                 "detail": "low",
-                            },
-                        },
-                    ],
+                            }
+                        }
+                    ]
                 }
             ]
-            )
+        )
 
 
         # Parse the response (assuming OpenAI returns both text and image certainties)
