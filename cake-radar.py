@@ -72,10 +72,10 @@ def assess_certainty(message_text: str) -> Optional[Tuple[str, int]]:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%) for the following message."},
+                {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message sent in a public Slack channel is about offering a edible treat, such as cake or snacks. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%). Example response format is: 'Yes, 95%'. Assess the following message."},
                 {
                     "role": "user",
-                    "content": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'.  If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. This is the messages to assess: '{message_text}'"
+                    "content": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is, or is not, about a colleague offering an edible treat (like a cake, candy, or pie). As I'd only want to look for edible treats in the office, if the message mentions a location or hub outside of Amsterdam, be more confident in 'no'.  If the message contains a lot of other information about work, but not about the treat, also be more confident in your 'no'. Example response format is: 'Yes, 95%'. This is the messages to assess: '{message_text}'"
                 }
             ]
         
