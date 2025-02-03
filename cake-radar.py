@@ -59,7 +59,9 @@ KEYWORDS = [
     "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
     "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", 
     "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
-    "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "coffee table", "2.1", "came back from", "alfajores"
+    "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "coffee table", "2.1",
+    "came back from", "alfajores", "argentina", "russia", "bolivia", "mexico", "iceland", "brazil",
+    "spain"
 ]
 
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
