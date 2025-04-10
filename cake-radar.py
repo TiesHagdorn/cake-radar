@@ -46,8 +46,8 @@ KEYWORDS = [
     "anniversary", "appelgebak", "appeltaart", "arnhemse meisjes", "baklava", "babka", 
     "banana bread", "beignet", "birthday", "biscuit", "black forest", "blondie", 
     "bonbon", "brandy snap", "brownie", "buche de noel", "cake", "cannoli", 
-    "caramel", "carrot cake", "celebration", "cheesecake", "chocolade", "chocolate", 
-    "chocolate bar", "churros", "clafoutis", "cookie", "crumble", "croissant", 
+    "caramel", "carrot cake", "celebration", "cheesecake", "chocolade", "chocolate",
+    "churros", "clafoutis", "cookie", "crumble", "croissant", 
     "croquembouche", "cupcake", "danish", "djupur", "donut", "duivekater", 
     "easter egg", "eclair", "fritter", "fudge", "galette", "gateau", "gelato",
     "gingerbread", "gummy bear", "honeycomb", "jellybean", "kitkat", "koulouri", 
@@ -57,11 +57,11 @@ KEYWORDS = [
     "pastry", "pancake", "pavlova", "pie", "poffertjes", "pudding", 
     "profiterole", "praline", "red velvet", "rocky road", "roomboterkoek", 
     "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
-    "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", 
+    "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", "sweets",
     "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
     "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "coffee table", "2.1",
-    "came back from", "alfajores", "argentina", "russia", "bolivia", "mexico", "iceland", "brazil",
-    "spain"
+    "came back from", "alfajores", "argenti", "russia", "bolivia", "mexic", "iceland", "brazil",
+    "spain", "candy", "candies", "moroc"
 ]
 
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
