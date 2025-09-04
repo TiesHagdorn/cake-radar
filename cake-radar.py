@@ -61,7 +61,7 @@ KEYWORDS = [
     "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
     "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "coffee table", "2.1",
     "came back from", "alfajores", "argenti", "russia", "bolivia", "mexic", "iceland", "brazil",
-    "spain", "candy", "candies", "moroc", "treats", "kitchen table", "metro side", "water side"
+    "spain", "candy", "candies", "moroc", "treats", "kitchen table", "metro side", "water side", "de nata"
 ]
 
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
