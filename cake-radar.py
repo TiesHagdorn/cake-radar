@@ -49,7 +49,7 @@ KEYWORDS = [
     "caramel", "carrot cake", "celebration", "cheesecake", "chocolade", "chocolate",
     "churros", "clafoutis", "cookie", "crumble", "croissant", 
     "croquembouche", "cupcake", "danish", "djupur", "donut", "duivekater", 
-    "easter egg", "eclair", "fritter", "fudge", "galette", "gateau", "gelato",
+    "easter egg", "eclair", "fritter", "fudge", "fika", "galette", "gateau", "gelato",
     "gingerbread", "gummy bear", "honeycomb", "jellybean", "kitkat", "koulouri", 
     "krentenbrood", "krentenbol", "kruidkoek", "lemon drizzle", "liquorice", 
     "macaron", "malteser", "marsepein", "marzipan", "meringue", "mochi", 
@@ -60,7 +60,7 @@ KEYWORDS = [
     "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", "sweets",
     "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
     "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "coffee table", "2.1",
-    "came back from", "alfajores", "argenti", "russia", "bolivia", "mexic", "iceland", "brazil",
+    "came back from", "alfajores", "argenti", "russia", "bolivia", "mexic", "iceland", "brazil", "leftover"
     "spain", "candy", "candies", "moroc", "treats", "kitchen table", "metro side", "water side", "de nata"
 ]
 
