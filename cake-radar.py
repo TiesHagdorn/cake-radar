@@ -42,27 +42,10 @@ log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
 # Keywords to search for in messages
-KEYWORDS = [
-    "anniversary", "appelgebak", "appeltaart", "arnhemse meisjes", "baklava", "babka", 
-    "banana bread", "beignet", "birthday", "biscuit", "black forest", "blondie", 
-    "bonbon", "brandy snap", "brownie", "buche de noel", "cake", "cannoli", 
-    "caramel", "carrot cake", "celebration", "cheesecake", "chocolade", "chocolate",
-    "churros", "clafoutis", "cookie", "crumble", "croissant", 
-    "croquembouche", "cupcake", "danish", "djupur", "donut", "duivekater", 
-    "easter egg", "eclair", "fritter", "fudge", "fika", "galette", "gateau", "gelato",
-    "gingerbread", "gummy bear", "honeycomb", "jellybean", "kitkat", "koulouri", 
-    "krentenbrood", "krentenbol", "kruidkoek", "lemon drizzle", "liquorice", 
-    "macaron", "malteser", "marsepein", "marzipan", "meringue", "mochi", 
-    "muffin", "nougat", "oliebol", "oliebollen", "ontbijtkoek", "panettone", "parfait", 
-    "pastry", "pancake", "pavlova", "pie", "poffertjes", "pudding", 
-    "profiterole", "praline", "red velvet", "rocky road", "roomboterkoek", 
-    "roombroodje", "rosette", "scone", "shortbread", "soufflé", "spekulaas", 
-    "speculaas", "sponge cake", "stroopwafel", "strudel", "sundae", "sweetbread", "sweets",
-    "syrup cake", "tart", "tiramisu", "toffee", "tompouce", "torte", "brought some", "kitchen area",
-    "truffle", "vacation", "vlaai", "waffle", "worstenbrood", "zeppole", "coffee table", "2.1",
-    "came back from", "alfajores", "argenti", "russia", "bolivia", "mexic", "iceland", "brazil", "leftover"
-    "spain", "candy", "candies", "moroc", "treats", "kitchen table", "metro side", "water side", "de nata"
-]
+# Load keywords from JSON file
+import json
+with open('keywords.json', 'r') as f:
+    KEYWORDS = json.load(f)
 
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
 ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
