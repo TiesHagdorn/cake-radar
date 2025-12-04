@@ -28,7 +28,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Channel configuration
 CAKE_RADAR_CHANNEL_ID = os.getenv("CAKE_RADAR_CHANNEL_ID", "C07RTPCLAKC")  # Channel to ignore messages from
-ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "#241017-cake-radar-tests")  # Channel for positive alerts
+ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "#cake-radar")  # Channel for positive alerts
 FALSE_ALARM_CHANNEL = os.getenv("FALSE_ALARM_CHANNEL", "#241126-cake-radar-false-alarms")  # Channel for false alarms
 
 # Check if required environment variables are set
