@@ -24,6 +24,11 @@ SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Channel configuration
+CAKE_RADAR_CHANNEL_ID = os.getenv("CAKE_RADAR_CHANNEL_ID", "C07RTPCLAKC")  # Channel to ignore messages from
+ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "#cake-radar")  # Channel for positive alerts
+FALSE_ALARM_CHANNEL = os.getenv("FALSE_ALARM_CHANNEL", "#241126-incident-cake")  # Channel for false alarms
+
 # Check if required environment variables are set
 if not all([SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY]):
     logging.error("One or more environment variables are missing!")
@@ -96,8 +101,8 @@ def handle_message(message, say):
         return
 
     # Check if the message is from the #cake-radar channel
-    if channel_id == "C07RTPCLAKC":
-        logging.info("Message from #cake-radar channel ignored.")
+    if channel_id == CAKE_RADAR_CHANNEL_ID:
+        logging.info(f"Message from cake-radar channel ({CAKE_RADAR_CHANNEL_ID}) ignored.")
         return
 
     # Check for keywords using regex
@@ -116,11 +121,11 @@ def handle_message(message, say):
             # Create the full message with certainty percentage
             full_message = f":green-light-blinker: *<{message_url}|Cake Alert!>* (Certainty: {certainty}%)"
 
-            # Cross-post the message to #cake-radar
+            # Cross-post the message to alert channel
             try:
-                say(channel="#cake-radar", text=full_message)
+                say(channel=ALERT_CHANNEL, text=full_message)
             except Exception as e:
-                print(f"Error sending message to channel: {e}")
+                print(f"Error sending message to {ALERT_CHANNEL}: {e}")
         elif assessment and "no" in assessment:
             # Send negative assessments to #241126-incident-cake
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
@@ -128,11 +133,11 @@ def handle_message(message, say):
             # Create the full message with certainty percentage
             full_message = f":red_circle: *<{message_url}|False Alarm>* (Certainty: {certainty}%)"
             
-            # Cross-post the message to #241126-incident-cake
+            # Cross-post the message to false alarm channel
             try:
-                say(channel="#241126-incident-cake", text=full_message)
+                say(channel=FALSE_ALARM_CHANNEL, text=full_message)
             except Exception as e:
-                print(f"Error sending message to channel: {e}")
+                print(f"Error sending message to {FALSE_ALARM_CHANNEL}: {e}")
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
