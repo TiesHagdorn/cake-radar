@@ -15,8 +15,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[
-                        logging.FileHandler("cake-radar.log"),  # Log to a file
-                        logging.StreamHandler()  # Also log to console
+                        logging.StreamHandler()  # Log to console only
                     ])
 
 # Load and validate environment variables
