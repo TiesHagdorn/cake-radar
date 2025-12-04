@@ -7,6 +7,8 @@ import re
 from typing import Optional, Tuple, Dict
 from dotenv import load_dotenv
 import os
+import requests
+import base64
 
 # Load environment variables from .env file
 load_dotenv()
@@ -54,25 +56,35 @@ with open('keywords.json', 'r') as f:
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
 ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
 
-# Function to get image URLs from Slack files
-def get_image_urls(files: list) -> list:
-    """Extract image URLs from Slack file attachments.
+# Function to get image URLs from Slack files and convert to base64
+def get_image_data(files: list) -> list:
+    """Download images from Slack and convert to base64 data URLs.
     
-    Note: Slack's url_private requires authentication via the bot token.
-    For OpenAI to access these images, we need to use url_private_download
-    with proper headers, or the images need to be publicly accessible.
+    Slack's private URLs require authentication, so we download them
+    using the bot token and convert to base64 for OpenAI.
     """
-    image_urls = []
+    image_data_urls = []
     for file in files:
         if file.get('mimetype', '').startswith('image/'):
-            # Try url_private_download first, fallback to url_private
             url = file.get('url_private_download') or file.get('url_private')
             if url:
-                # Note: OpenAI cannot access Slack's private URLs directly
-                # We'll pass the URL with auth headers in the future
-                # For now, this will work if images are shared publicly
-                image_urls.append(url)
-    return image_urls
+                try:
+                    # Download image with Slack bot token authentication
+                    headers = {'Authorization': f'Bearer {SLACK_BOT_TOKEN}'}
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        # Convert to base64
+                        image_base64 = base64.b64encode(response.content).decode('utf-8')
+                        mime_type = file.get('mimetype', 'image/jpeg')
+                        data_url = f"data:{mime_type};base64,{image_base64}"
+                        image_data_urls.append(data_url)
+                        logging.info(f"Successfully downloaded and encoded image: {file.get('name', 'unknown')}")
+                    else:
+                        logging.error(f"Failed to download image from {url}: HTTP {response.status_code}")
+                except Exception as e:
+                    logging.error(f"Error downloading image from {url}: {e}")
+    return image_data_urls
 
 # Function to assess text certainty
 def assess_text_certainty(message_text: str) -> Tuple[str, int]:
@@ -99,16 +111,16 @@ def assess_text_certainty(message_text: str) -> Tuple[str, int]:
         return None, 0
 
 # Function to assess image certainty
-def assess_image_certainty(image_urls: list) -> Tuple[str, int]:
+def assess_image_certainty(image_data_urls: list) -> Tuple[str, int]:
     """Assess the likelihood of images showing food/treats."""
     try:
         user_content = [{"type": "text", "text": "Do these images show edible treats like cake, candy, pie, or snacks? Respond with 'yes' or 'no' and include certainty level in percentage (0-100%). Example: 'Yes, 95%' or 'No, 80%'."}]
         
-        for image_url in image_urls:
+        for image_data_url in image_data_urls:
             user_content.append({
                 "type": "image_url",
                 "image_url": {
-                    "url": image_url,
+                    "url": image_data_url,
                     "detail": "low"
                 }
             })
@@ -132,7 +144,7 @@ def assess_image_certainty(image_urls: list) -> Tuple[str, int]:
         return None, 0
 
 # Function to assess certainty with detailed breakdown
-def assess_certainty(message_text: str, image_urls: list = None) -> Dict:
+def assess_certainty(message_text: str, image_data_urls: list = None) -> Dict:
     """Assess the likelihood of the message being about offering something.
     
     Returns a dict with:
@@ -146,12 +158,12 @@ def assess_certainty(message_text: str, image_urls: list = None) -> Dict:
     
     # Assess images if available
     image_decision, image_certainty = None, None
-    if image_urls:
-        logging.info(f"Analyzing {len(image_urls)} image(s)")
-        image_decision, image_certainty = assess_image_certainty(image_urls)
+    if image_data_urls:
+        logging.info(f"Analyzing {len(image_data_urls)} image(s)")
+        image_decision, image_certainty = assess_image_certainty(image_data_urls)
     
     # Combine decisions and certainties
-    if image_urls and image_decision:
+    if image_data_urls and image_decision:
         # Both text and image available - use weighted average
         # Give more weight to images (60%) as they're more reliable
         total_certainty = int(text_certainty * 0.4 + image_certainty * 0.6)
@@ -196,11 +208,11 @@ def handle_message(message, say):
 
     # Check for keywords using regex
     if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in KEYWORDS):
-        # Get image URLs if any images are attached
-        image_urls = get_image_urls(files)
+        # Get image data (base64 encoded) if any images are attached
+        image_data_urls = get_image_data(files)
         
         # Assess the certainty of the message (with images if available)
-        result = assess_certainty(text, image_urls)
+        result = assess_certainty(text, image_data_urls)
         
         decision = result['decision']
         total_certainty = result['total_certainty']
