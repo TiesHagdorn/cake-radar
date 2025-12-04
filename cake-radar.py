@@ -121,6 +121,18 @@ def handle_message(message, say):
                 say(channel="#cake-radar", text=full_message)
             except Exception as e:
                 print(f"Error sending message to channel: {e}")
+        elif assessment and "no" in assessment:
+            # Send negative assessments to #241126-incident-cake
+            message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
+            
+            # Create the full message with certainty percentage
+            full_message = f":red_circle: *<{message_url}|False Alarm>* (Certainty: {certainty}%)"
+            
+            # Cross-post the message to #241126-incident-cake
+            try:
+                say(channel="#241126-incident-cake", text=full_message)
+            except Exception as e:
+                print(f"Error sending message to channel: {e}")
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
