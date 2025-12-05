@@ -264,6 +264,53 @@ def slack_events():
     return handler.handle(request)
 
 # Start the Flask app
+# Start the Flask app or run in CLI mode
 if __name__ == "__main__":
+    import argparse
+    import sys
+
+    def print_assessment(text):
+        print(f"\n--- Testing Message: '{text}' ---")
+        found_keywords = [k for k in KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
+        
+        if found_keywords:
+            print(f"✅ Keywords found: {found_keywords}")
+            print("🤔 Assessing certainty with AI...")
+            result = assess_certainty(text)
+            
+            print(f"\n--- Assessment Result ---")
+            print(f"Decision: {result['decision'].upper()}")
+            print(f"Total Certainty: {result['total_certainty']}%")
+            print(f"Text Certainty: {result['text_certainty']}%")
+            if result['image_certainty'] is not None:
+                print(f"Image Certainty: {result['image_certainty']}%")
+        else:
+            print("❌ No cake keywords found.")
+
+    parser = argparse.ArgumentParser(description="Cake Radar Bot")
+    parser.add_argument("--test", type=str, help="Test a single message string")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
+    args = parser.parse_args()
+
+    if args.test:
+        print_assessment(args.test)
+        sys.exit(0)
+
+    if args.interactive:
+        print("🍰 Cake Radar Interactive Mode")
+        print("Type a message to test (or 'exit'/'quit' to stop):")
+        while True:
+            try:
+                user_input = input("\n> ")
+                if user_input.lower() in ['exit', 'quit']:
+                    break
+                if not user_input.strip():
+                    continue
+                print_assessment(user_input)
+            except KeyboardInterrupt:
+                break
+        print("\nBye! 👋")
+        sys.exit(0)
+
     port = int(os.environ.get("PORT", 3000))  # Default to 3000 if PORT is not set
     flask_app.run(host='0.0.0.0', port=port)
