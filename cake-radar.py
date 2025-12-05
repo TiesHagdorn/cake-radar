@@ -56,36 +56,6 @@ with open('keywords.json', 'r') as f:
 PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
 ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
 
-# Function to get image URLs from Slack files and convert to base64
-def get_image_data(files: list) -> list:
-    """Download images from Slack and convert to base64 data URLs.
-    
-    Slack's private URLs require authentication, so we download them
-    using the bot token and convert to base64 for OpenAI.
-    """
-    image_data_urls = []
-    for file in files:
-        if file.get('mimetype', '').startswith('image/'):
-            url = file.get('url_private_download') or file.get('url_private')
-            if url:
-                try:
-                    # Download image with Slack bot token authentication
-                    headers = {'Authorization': f'Bearer {SLACK_BOT_TOKEN}'}
-                    response = requests.get(url, headers=headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        # Convert to base64
-                        image_base64 = base64.b64encode(response.content).decode('utf-8')
-                        mime_type = file.get('mimetype', 'image/jpeg')
-                        data_url = f"data:{mime_type};base64,{image_base64}"
-                        image_data_urls.append(data_url)
-                        logging.info(f"Successfully downloaded and encoded image: {file.get('name', 'unknown')}")
-                    else:
-                        logging.error(f"Failed to download image from {url}: HTTP {response.status_code}")
-                except Exception as e:
-                    logging.error(f"Error downloading image from {url}: {e}")
-    return image_data_urls
-
 # Function to assess text certainty
 def assess_text_certainty(message_text: str) -> Tuple[str, int]:
     """Assess the likelihood of the message text being about offering something."""
@@ -110,78 +80,20 @@ def assess_text_certainty(message_text: str) -> Tuple[str, int]:
         logging.error(f"Error assessing text certainty: {e}")
         return None, 0
 
-# Function to assess image certainty
-def assess_image_certainty(image_data_urls: list) -> Tuple[str, int]:
-    """Assess the likelihood of images showing food/treats."""
-    try:
-        user_content = [{"type": "text", "text": "Do these images show edible treats like cake, candy, pie, or snacks? Respond with 'yes' or 'no' and include certainty level in percentage (0-100%). Example: 'Yes, 95%' or 'No, 80%'."}]
-        
-        for image_data_url in image_data_urls:
-            user_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": image_data_url,
-                    "detail": "low"
-                }
-            })
-        
-        response = client.chat.completions.create(
-            model="gpt-5.1",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that analyzes images to detect food and treats. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%)."},
-                {"role": "user", "content": user_content}
-            ]
-        )
-        
-        assessment = response.choices[0].message.content.strip().lower()
-        if ',' in assessment:
-            decision, certainty_str = assessment.split(',')
-            certainty = int(certainty_str.strip().replace('%', ''))
-            return decision.strip(), certainty
-        return assessment, 0
-    except Exception as e:
-        logging.error(f"Error assessing image certainty: {e}")
-        return None, 0
-
-# Function to assess certainty with detailed breakdown
-def assess_certainty(message_text: str, image_data_urls: list = None) -> Dict:
+# Function to assess certainty
+def assess_certainty(message_text: str) -> Dict:
     """Assess the likelihood of the message being about offering something.
     
     Returns a dict with:
     - decision: 'yes' or 'no'
     - total_certainty: combined certainty score
-    - text_certainty: certainty from text analysis
-    - image_certainty: certainty from image analysis (None if no images)
     """
     # Assess text
     text_decision, text_certainty = assess_text_certainty(message_text)
     
-    # Assess images if available
-    image_decision, image_certainty = None, None
-    if image_data_urls:
-        logging.info(f"Analyzing {len(image_data_urls)} image(s)")
-        image_decision, image_certainty = assess_image_certainty(image_data_urls)
-    
-    # Combine decisions and certainties
-    if image_data_urls and image_decision:
-        # Both text and image available - use weighted average
-        # Give more weight to images (60%) as they're more reliable
-        total_certainty = int(text_certainty * 0.4 + image_certainty * 0.6)
-        # Decision is 'yes' if either is 'yes' with high confidence
-        if 'yes' in text_decision or 'yes' in image_decision:
-            decision = 'yes'
-        else:
-            decision = 'no'
-    else:
-        # Only text available
-        decision = text_decision
-        total_certainty = text_certainty
-    
     return {
-        'decision': decision,
-        'total_certainty': total_certainty,
-        'text_certainty': text_certainty,
-        'image_certainty': image_certainty
+        'decision': text_decision,
+        'total_certainty': text_certainty,
     }
 
 # Listen for messages and check for keywords
@@ -191,7 +103,6 @@ def handle_message(message, say):
     channel_id = message['channel']
     ts = message['ts']                          # Timestamp of the message
     thread_ts = message.get('thread_ts')        # Check if the message is a thread reply
-    files = message.get('files', [])            # Get attached files
 
     # Log the incoming message text
     logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
@@ -208,30 +119,22 @@ def handle_message(message, say):
 
     # Check for keywords using regex
     if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in KEYWORDS):
-        # Get image data (base64 encoded) if any images are attached
-        image_data_urls = get_image_data(files)
         
-        # Assess the certainty of the message (with images if available)
-        result = assess_certainty(text, image_data_urls)
+        # Assess the certainty of the message
+        result = assess_certainty(text)
         
         decision = result['decision']
         total_certainty = result['total_certainty']
-        text_certainty = result['text_certainty']
-        image_certainty = result['image_certainty']
 
         # Log the assessment and certainty level to the terminal
-        logging.info(f"Assessed Message: '{text}', Decision: {decision}, Total: {total_certainty}%, Text: {text_certainty}%, Image: {image_certainty}%")
+        logging.info(f"Assessed Message: '{text}', Decision: {decision}, Total: {total_certainty}%")
 
         # Only cross-post if the assessment is 'yes' and certainty is high.
         if decision and "yes" in decision and total_certainty > 85:
             # Construct the message URL to crosspost
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
 
-            # Create the full message with detailed certainty breakdown
-            if image_certainty is not None:
-                certainty_info = f"Total certainty: {total_certainty}%. Message certainty: {text_certainty}%, Image certainty: {image_certainty}%"
-            else:
-                certainty_info = f"Certainty: {total_certainty}%"
+            certainty_info = f"Certainty: {total_certainty}%"
             
             full_message = f":green-light-blinker: *<{message_url}|Cake Alert!>* ({certainty_info})"
 
@@ -244,11 +147,7 @@ def handle_message(message, say):
             # Send negative assessments to false alarm channel
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
             
-            # Create the full message with detailed certainty breakdown
-            if image_certainty is not None:
-                certainty_info = f"Total certainty: {total_certainty}%. Message certainty: {text_certainty}%, Image certainty: {image_certainty}%"
-            else:
-                certainty_info = f"Certainty: {total_certainty}%"
+            certainty_info = f"Certainty: {total_certainty}%"
             
             full_message = f":red_circle: *<{message_url}|False Alarm>* ({certainty_info})"
             
@@ -281,9 +180,6 @@ if __name__ == "__main__":
             print(f"\n--- Assessment Result ---")
             print(f"Decision: {result['decision'].upper()}")
             print(f"Total Certainty: {result['total_certainty']}%")
-            print(f"Text Certainty: {result['text_certainty']}%")
-            if result['image_certainty'] is not None:
-                print(f"Image Certainty: {result['image_certainty']}%")
         else:
             print("❌ No cake keywords found.")
 
