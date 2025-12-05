@@ -31,9 +31,17 @@ handler = SlackRequestHandler(app)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-# Function to assess text certainty
-def assess_text_certainty(message_text: str) -> Tuple[str, int]:
-    """Assess the likelihood of the message text being about offering something."""
+# Function to assess certainty
+def assess_certainty(message_text: str) -> Dict:
+    """Assess the likelihood of the message being about offering something.
+    
+    Returns a dict with:
+    - decision: 'yes' or 'no'
+    - total_certainty: combined certainty score
+    """
+    decision = "no"
+    total_certainty = 0
+    
     try:
         response = client.chat.completions.create(
             model=Config.OPENAI_MODEL,
@@ -47,28 +55,18 @@ def assess_text_certainty(message_text: str) -> Tuple[str, int]:
         )
         assessment = response.choices[0].message.content.strip().lower()
         if ',' in assessment:
-            decision, certainty_str = assessment.split(',')
-            certainty = int(certainty_str.strip().replace('%', ''))
-            return decision.strip(), certainty
-        return assessment, 0
+            decision_part, certainty_str = assessment.split(',')
+            decision = decision_part.strip()
+            total_certainty = int(certainty_str.strip().replace('%', ''))
+        else:
+             decision = assessment
     except Exception as e:
-        logging.error(f"Error assessing text certainty: {e}")
-        return None, 0
+        logging.error(f"Error assessing certainty: {e}")
+        return {'decision': 'no', 'total_certainty': 0}
 
-# Function to assess certainty
-def assess_certainty(message_text: str) -> Dict:
-    """Assess the likelihood of the message being about offering something.
-    
-    Returns a dict with:
-    - decision: 'yes' or 'no'
-    - total_certainty: combined certainty score
-    """
-    # Assess text
-    text_decision, text_certainty = assess_text_certainty(message_text)
-    
     return {
-        'decision': text_decision,
-        'total_certainty': text_certainty,
+        'decision': decision,
+        'total_certainty': total_certainty,
     }
 
 def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel):
@@ -139,9 +137,6 @@ def slack_events():
 if __name__ == "__main__":
     import argparse
     import sys
-    import json # Added import here as well just in case, though it is imported at top level in global scope in original file? 
-    # Wait, json was imported inside a block in original. I need to make sure I import it globally or inside Config.
-    import json # Re-importing at top level is better.
 
     def print_assessment(text):
         print(f"\n--- Testing Message: '{text}' ---")
@@ -183,5 +178,4 @@ if __name__ == "__main__":
         print("\nBye! 👋")
         sys.exit(0)
 
-    port = int(os.environ.get("PORT", 3000))  # Default to 3000 if PORT is not set
-    flask_app.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=Config.PORT)

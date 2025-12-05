@@ -22,6 +22,9 @@ class Config:
     # AI Settings
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
     CERTAINTY_THRESHOLD = int(os.getenv("CERTAINTY_THRESHOLD", "85"))
+
+    # App Settings
+    PORT = int(os.getenv("PORT", 3000))
     
     SYSTEM_PROMPT = "You are a helpful assistant that evaluates whether a Slack message is about offering an edible treat. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%). Example: 'Yes, 95%' or 'No, 80%'."
     USER_PROMPT_TEMPLATE = "Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is about a colleague offering an edible treat (like a cake, candy, or pie). If the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, be more confident in your 'no'. Example response format is: 'Yes, 95%' or 'No, 80%'. Message: '{message_text}'"
