@@ -38,10 +38,10 @@ def assess_text_certainty(message_text: str) -> Tuple[str, int]:
         response = client.chat.completions.create(
             model=Config.OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message is about offering an edible treat. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%). Example: 'Yes, 95%' or 'No, 80%'."},
+                {"role": "system", "content": Config.SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": f"Only respond with 'yes' or 'no' and include certainty level in percentage (0%-100%) that represents how likely you are that the message is about a colleague offering an edible treat (like a cake, candy, or pie). If the message mentions a location or hub outside of Amsterdam, be more confident in 'no'. If the message contains a lot of other information about work, be more confident in your 'no'. Example response format is: 'Yes, 95%' or 'No, 80%'. Message: '{message_text}'"
+                    "content": Config.USER_PROMPT_TEMPLATE.format(message_text=message_text)
                 }
             ]
         )
@@ -70,6 +70,25 @@ def assess_certainty(message_text: str) -> Dict:
         'decision': text_decision,
         'total_certainty': text_certainty,
     }
+
+def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel):
+    """Helper to format and send the Slack alert."""
+    message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
+    certainty_info = f"Certainty: {certainty}%"
+    
+    if "yes" in decision:
+        icon = ":green-light-blinker:"
+        title = "Cake Alert!"
+    else:
+        icon = ":red_circle:"
+        title = "False Alarm"
+        
+    full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})"
+    
+    try:
+        say(channel=target_channel, text=full_message)
+    except Exception as e:
+        logging.error(f"Error sending message to {target_channel}: {e}")
 
 # Listen for messages and check for keywords
 @app.message()
@@ -104,33 +123,11 @@ def handle_message(message, say):
         # Log the assessment and certainty level to the terminal
         logging.info(f"Assessed Message: '{text}', Decision: {decision}, Total: {total_certainty}%")
 
-        # Only cross-post if the assessment is 'yes' and certainty is high.
+        # Routing logic
         if decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD:
-            # Construct the message URL to crosspost
-            message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
-
-            certainty_info = f"Certainty: {total_certainty}%"
-            
-            full_message = f":green-light-blinker: *<{message_url}|Cake Alert!>* ({certainty_info})"
-
-            # Cross-post the message to alert channel
-            try:
-                say(channel=Config.ALERT_CHANNEL, text=full_message)
-            except Exception as e:
-                logging.error(f"Error sending message to {Config.ALERT_CHANNEL}: {e}")
+            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL)
         elif decision and "no" in decision:
-            # Send negative assessments to false alarm channel
-            message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
-            
-            certainty_info = f"Certainty: {total_certainty}%"
-            
-            full_message = f":red_circle: *<{message_url}|False Alarm>* ({certainty_info})"
-            
-            # Cross-post the message to false alarm channel
-            try:
-                say(channel=Config.FALSE_ALARM_CHANNEL, text=full_message)
-            except Exception as e:
-                print(f"Error sending message to {Config.FALSE_ALARM_CHANNEL}: {e}")
+            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.FALSE_ALARM_CHANNEL)
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
