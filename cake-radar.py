@@ -5,13 +5,8 @@ from openai import OpenAI
 import logging
 import re
 from typing import Optional, Tuple, Dict
-from dotenv import load_dotenv
 import os
-import requests
-import base64
-
-# Load environment variables from .env file
-load_dotenv()
+from config import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -20,25 +15,14 @@ logging.basicConfig(level=logging.INFO,
                         logging.StreamHandler()  # Log to console only
                     ])
 
-# Load and validate environment variables
-SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
-SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Channel configuration
-CAKE_RADAR_CHANNEL_ID = os.getenv("CAKE_RADAR_CHANNEL_ID", "C07RTPCLAKC")  # Channel to ignore messages from
-ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "#cake-radar")  # Channel for positive alerts
-FALSE_ALARM_CHANNEL = os.getenv("FALSE_ALARM_CHANNEL", "#241126-cake-radar-false-alarms")  # Channel for false alarms
-
-# Check if required environment variables are set
-if not all([SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY]):
-    logging.error("One or more environment variables are missing!")
+# Initialize Config
+if not Config.validate():
     exit(1)
+Config.load_keywords()
 
 # Initialize the Slack app and Flask app
-app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+app = App(token=Config.SLACK_BOT_TOKEN, signing_secret=Config.SLACK_SIGNING_SECRET)
+client = OpenAI(api_key=Config.OPENAI_API_KEY)
 flask_app = Flask(__name__)
 flask_app.logger.disabled = True
 handler = SlackRequestHandler(app)
@@ -47,21 +31,12 @@ handler = SlackRequestHandler(app)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-# Keywords to search for in messages
-# Load keywords from JSON file
-import json
-with open('keywords.json', 'r') as f:
-    KEYWORDS = json.load(f)
-
-PLURAL_KEYWORDS = [keyword + 's' for keyword in KEYWORDS]  # Adding plurals
-ALL_KEYWORDS = KEYWORDS + PLURAL_KEYWORDS
-
 # Function to assess text certainty
 def assess_text_certainty(message_text: str) -> Tuple[str, int]:
     """Assess the likelihood of the message text being about offering something."""
     try:
         response = client.chat.completions.create(
-            model="gpt-5.1",
+            model=Config.OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that evaluates whether a Slack message is about offering an edible treat. Respond with 'yes' or 'no' and include certainty level in percentage (0-100%). Example: 'Yes, 95%' or 'No, 80%'."},
                 {
@@ -113,12 +88,12 @@ def handle_message(message, say):
         return
 
     # Check if the message is from the #cake-radar channel
-    if channel_id == CAKE_RADAR_CHANNEL_ID:
-        logging.info(f"Message from cake-radar channel ({CAKE_RADAR_CHANNEL_ID}) ignored.")
+    if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
+        logging.info(f"Message from cake-radar channel ({Config.CAKE_RADAR_CHANNEL_ID}) ignored.")
         return
 
     # Check for keywords using regex
-    if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in KEYWORDS):
+    if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in Config.KEYWORDS):
         
         # Assess the certainty of the message
         result = assess_certainty(text)
@@ -130,7 +105,7 @@ def handle_message(message, say):
         logging.info(f"Assessed Message: '{text}', Decision: {decision}, Total: {total_certainty}%")
 
         # Only cross-post if the assessment is 'yes' and certainty is high.
-        if decision and "yes" in decision and total_certainty > 85:
+        if decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD:
             # Construct the message URL to crosspost
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
 
@@ -140,9 +115,9 @@ def handle_message(message, say):
 
             # Cross-post the message to alert channel
             try:
-                say(channel=ALERT_CHANNEL, text=full_message)
+                say(channel=Config.ALERT_CHANNEL, text=full_message)
             except Exception as e:
-                logging.error(f"Error sending message to {ALERT_CHANNEL}: {e}")
+                logging.error(f"Error sending message to {Config.ALERT_CHANNEL}: {e}")
         elif decision and "no" in decision:
             # Send negative assessments to false alarm channel
             message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
@@ -153,9 +128,9 @@ def handle_message(message, say):
             
             # Cross-post the message to false alarm channel
             try:
-                say(channel=FALSE_ALARM_CHANNEL, text=full_message)
+                say(channel=Config.FALSE_ALARM_CHANNEL, text=full_message)
             except Exception as e:
-                print(f"Error sending message to {FALSE_ALARM_CHANNEL}: {e}")
+                print(f"Error sending message to {Config.FALSE_ALARM_CHANNEL}: {e}")
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
@@ -167,10 +142,13 @@ def slack_events():
 if __name__ == "__main__":
     import argparse
     import sys
+    import json # Added import here as well just in case, though it is imported at top level in global scope in original file? 
+    # Wait, json was imported inside a block in original. I need to make sure I import it globally or inside Config.
+    import json # Re-importing at top level is better.
 
     def print_assessment(text):
         print(f"\n--- Testing Message: '{text}' ---")
-        found_keywords = [k for k in KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
+        found_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
         
         if found_keywords:
             print(f"✅ Keywords found: {found_keywords}")
