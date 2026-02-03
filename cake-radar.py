@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Optional, Tuple, Dict
 import os
+from collections import deque
 from config import Config
 
 # Configure logging
@@ -19,6 +20,9 @@ logging.basicConfig(level=logging.INFO,
 if not Config.validate():
     exit(1)
 Config.load_keywords()
+
+# Track processed messages to handle Slack retries
+processed_messages = deque(maxlen=1000)
 
 # Initialize the Slack app and Flask app
 app = App(token=Config.SLACK_BOT_TOKEN, signing_secret=Config.SLACK_SIGNING_SECRET)
@@ -69,7 +73,7 @@ def assess_certainty(message_text: str) -> Dict:
         'total_certainty': total_certainty,
     }
 
-def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel):
+def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, original_text):
     """Helper to format and send the Slack alert."""
     message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
     certainty_info = f"Certainty: {certainty}%"
@@ -81,7 +85,7 @@ def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel):
         icon = ":red_circle:"
         title = "False Alarm"
         
-    full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})"
+    full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})\n> {original_text}"
     
     try:
         say(channel=target_channel, text=full_message)
@@ -91,10 +95,17 @@ def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel):
 # Listen for messages and check for keywords
 @app.message()
 def handle_message(message, say):
-    text = message.get('text', '').lower()
+    original_text = message.get('text', '')
+    text = original_text.lower()
     channel_id = message['channel']
     ts = message['ts']                          # Timestamp of the message
     thread_ts = message.get('thread_ts')        # Check if the message is a thread reply
+
+    # Deduplicate messages to prevent handling retries
+    if (channel_id, ts) in processed_messages:
+        logging.info(f"Ignoring duplicate message {ts} in channel {channel_id}")
+        return
+    processed_messages.append((channel_id, ts))
 
     # Log the incoming message text
     logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
@@ -123,9 +134,9 @@ def handle_message(message, say):
 
         # Routing logic
         if decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD:
-            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL)
+            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
         elif decision and "no" in decision:
-            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.FALSE_ALARM_CHANNEL)
+            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.FALSE_ALARM_CHANNEL, original_text)
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
