@@ -85,7 +85,7 @@ def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, o
         icon = ":red_circle:"
         title = "False Alarm"
         
-    full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})\n> {original_text}"
+    full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})"
     
     try:
         say(channel=target_channel, text=full_message)
