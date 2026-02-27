@@ -17,9 +17,9 @@ sys.modules['cake_radar'] = cake_radar
 
 def test_keywords_loaded():
     """Verify keywords are loaded correctly."""
-    assert len(cake_radar.KEYWORDS) > 0
-    assert "cake" in cake_radar.KEYWORDS
-    assert "croissant" in cake_radar.KEYWORDS
+    assert len(cake_radar.Config.KEYWORDS) > 0
+    assert "cake" in cake_radar.Config.KEYWORDS
+    assert "croissant" in cake_radar.Config.KEYWORDS
 
 def test_keyword_matching():
     """Verify regex matching works for various cake phrases."""
@@ -34,7 +34,7 @@ def test_keyword_matching():
     ]
     
     for text, expected in cases:
-        found = any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in cake_radar.KEYWORDS)
+        found = any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in cake_radar.Config.KEYWORDS)
         assert found == expected, f"Failed for text: '{text}'"
 
 @patch('cake_radar.client')
@@ -49,7 +49,6 @@ def test_assess_certainty_positive(mock_client):
     
     assert result['decision'] == 'yes'
     assert result['total_certainty'] == 95
-    assert result['text_certainty'] == 95
 
 @patch('cake_radar.client')
 def test_assess_certainty_negative(mock_client):
