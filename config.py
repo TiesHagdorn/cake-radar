@@ -20,7 +20,7 @@ class Config:
     FALSE_ALARM_CHANNEL = os.getenv("FALSE_ALARM_CHANNEL", "#241126-cake-radar-false-alarms")
 
     # AI Settings
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     CERTAINTY_THRESHOLD = int(os.getenv("CERTAINTY_THRESHOLD", "85"))
 
     # App Settings
