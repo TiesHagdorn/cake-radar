@@ -4,7 +4,9 @@ from flask import Flask, request
 from openai import OpenAI
 import logging
 import re
-from typing import Optional, Tuple, Dict
+import base64
+import requests
+from typing import Optional, Tuple, Dict, List
 import os
 from collections import deque
 from config import Config
@@ -33,12 +35,31 @@ handler = SlackRequestHandler(app)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+def download_slack_images(files: list, max_images: int = 1) -> List[str]:
+    """Download image attachments from a Slack message and return as base64 data URIs."""
+    data_uris = []
+    for f in files:
+        if len(data_uris) >= max_images:
+            break
+        mimetype = f.get('mimetype', '')
+        url = f.get('url_private')
+        if not mimetype.startswith('image/') or not url:
+            continue
+        try:
+            response = requests.get(url, headers={'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}, timeout=10)
+            response.raise_for_status()
+            encoded = base64.b64encode(response.content).decode('utf-8')
+            data_uris.append(f"data:{mimetype};base64,{encoded}")
+        except Exception as e:
+            logging.error(f"Failed to download Slack image: {e}")
+    return data_uris
+
 def calculate_cost(prompt_tokens: int, completion_tokens: int) -> float:
     """Calculate the cost of an API call in dollars."""
     return (prompt_tokens * Config.INPUT_COST_PER_MTOK + completion_tokens * Config.OUTPUT_COST_PER_MTOK) / 1_000_000
 
 # Function to assess certainty
-def assess_certainty(message_text: str) -> Dict:
+def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Dict:
     """Assess the likelihood of the message being about offering something.
 
     Returns a dict with:
@@ -49,16 +70,21 @@ def assess_certainty(message_text: str) -> Dict:
     """
     decision = "no"
     total_certainty = 0
+    prompt_text = Config.USER_PROMPT_TEMPLATE.format(message_text=message_text)
+
+    if image_data_uris:
+        user_content = [{"type": "text", "text": prompt_text}]
+        for uri in image_data_uris:
+            user_content.append({"type": "image_url", "image_url": {"url": uri, "detail": "low"}})
+    else:
+        user_content = prompt_text
 
     try:
         response = client.chat.completions.create(
             model=Config.OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": Config.SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": Config.USER_PROMPT_TEMPLATE.format(message_text=message_text)
-                }
+                {"role": "user", "content": user_content}
             ]
         )
         assessment = response.choices[0].message.content.strip().lower()
@@ -124,8 +150,11 @@ def handle_message(message, say):
     matched_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
     if matched_keywords:
 
+        # Download any image attachments
+        image_data_uris = download_slack_images(message.get('files', []))
+
         # Assess the certainty of the message
-        result = assess_certainty(text)
+        result = assess_certainty(text, image_data_uris)
 
         decision = result['decision']
         total_certainty = result['total_certainty']
@@ -139,7 +168,7 @@ def handle_message(message, say):
         logging.info(
             f"EVALUATED | channel={channel_id} ts={ts} | "
             f"message='{original_text}' | "
-            f"keywords={matched_keywords} | "
+            f"keywords={matched_keywords} | images={len(image_data_uris)} | "
             f"model={Config.OPENAI_MODEL} | "
             f"decision={decision} certainty={total_certainty}% | "
             f"tokens={prompt_tokens}+{completion_tokens} cost=${cost:.6f} | "
