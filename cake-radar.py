@@ -174,10 +174,7 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
 
 def send_daily_summary():
-    """Send a daily DM summary and reset stats."""
-    if not Config.SUMMARY_USER_ID:
-        logging.warning("SUMMARY_USER_ID not set — skipping daily summary")
-        return
+    """Send a daily summary to the summary channel and reset stats."""
     try:
         date_str = datetime.now(ZoneInfo("Europe/Amsterdam")).strftime("%-d %b %Y")
         text = (
@@ -188,10 +185,8 @@ def send_daily_summary():
             f"({daily_stats['total_prompt_tokens']:,} in + {daily_stats['total_completion_tokens']:,} out)\n"
             f"Estimated cost: ${daily_stats['total_cost']:.4f}"
         )
-        result = app.client.conversations_open(users=Config.SUMMARY_USER_ID)
-        dm_channel = result['channel']['id']
-        app.client.chat_postMessage(channel=dm_channel, text=text)
-        logging.info(f"Daily summary sent to {Config.SUMMARY_USER_ID}")
+        app.client.chat_postMessage(channel=Config.SUMMARY_CHANNEL_ID, text=text)
+        logging.info(f"Daily summary sent to {Config.SUMMARY_CHANNEL_ID}")
     except Exception as e:
         logging.error(f"Failed to send daily summary: {e}")
     finally:

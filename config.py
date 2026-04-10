@@ -25,7 +25,7 @@ class Config:
     OUTPUT_COST_PER_MTOK = float(os.getenv("OUTPUT_COST_PER_MTOK", "1.25"))
 
     # Daily summary
-    SUMMARY_USER_ID = os.getenv("SUMMARY_USER_ID")
+    SUMMARY_CHANNEL_ID = os.getenv("SUMMARY_CHANNEL_ID", "C0AF1HYSSJG")
     SUMMARY_TIME = os.getenv("SUMMARY_TIME", "17:00")
 
     # App Settings
