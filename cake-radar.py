@@ -10,11 +10,9 @@ from collections import deque
 from config import Config
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.StreamHandler()  # Log to console only
-                    ])
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(levelname)-7s %(message)s',
+                    handlers=[logging.StreamHandler()])
 
 # Initialize Config
 if not Config.validate():
@@ -35,17 +33,23 @@ handler = SlackRequestHandler(app)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+def calculate_cost(prompt_tokens: int, completion_tokens: int) -> float:
+    """Calculate the cost of an API call in dollars."""
+    return (prompt_tokens * Config.INPUT_COST_PER_MTOK + completion_tokens * Config.OUTPUT_COST_PER_MTOK) / 1_000_000
+
 # Function to assess certainty
 def assess_certainty(message_text: str) -> Dict:
     """Assess the likelihood of the message being about offering something.
-    
+
     Returns a dict with:
     - decision: 'yes' or 'no'
     - total_certainty: combined certainty score
+    - prompt_tokens: number of input tokens used
+    - completion_tokens: number of output tokens used
     """
     decision = "no"
     total_certainty = 0
-    
+
     try:
         response = client.chat.completions.create(
             model=Config.OPENAI_MODEL,
@@ -64,13 +68,17 @@ def assess_certainty(message_text: str) -> Dict:
             total_certainty = int(certainty_str.strip().replace('%', ''))
         else:
              decision = assessment
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
     except Exception as e:
         logging.error(f"Error assessing certainty: {e}")
-        return {'decision': 'no', 'total_certainty': 0}
+        return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
 
     return {
         'decision': decision,
         'total_certainty': total_certainty,
+        'prompt_tokens': prompt_tokens,
+        'completion_tokens': completion_tokens,
     }
 
 def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, original_text):
@@ -98,37 +106,47 @@ def handle_message(message, say):
 
     # Deduplicate messages to prevent handling retries
     if (channel_id, ts) in processed_messages:
-        logging.info(f"Ignoring duplicate message {ts} in channel {channel_id}")
+        logging.info(f"SKIP duplicate | channel={channel_id} ts={ts}")
         return
     processed_messages.append((channel_id, ts))
 
-    # Log the incoming message text
-    logging.info(f"Received message: '{text}' from channel: {channel_id} (timestamp: {ts})")
-
     # Exclude messages in threads
     if thread_ts and thread_ts != ts:
-        logging.info("Message is a thread reply and will be ignored.")
+        logging.info(f"SKIP thread_reply | channel={channel_id} ts={ts}")
         return
 
     # Check if the message is from the #cake-radar channel
     if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
-        logging.info(f"Message from cake-radar channel ({Config.CAKE_RADAR_CHANNEL_ID}) ignored.")
+        logging.info(f"SKIP cake-radar channel | ts={ts}")
         return
 
     # Check for keywords using regex
-    if any(re.search(rf"{keyword}", text, re.IGNORECASE) for keyword in Config.KEYWORDS):
-        
+    matched_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
+    if matched_keywords:
+
         # Assess the certainty of the message
         result = assess_certainty(text)
-        
+
         decision = result['decision']
         total_certainty = result['total_certainty']
+        prompt_tokens = result['prompt_tokens']
+        completion_tokens = result['completion_tokens']
+        cost = calculate_cost(prompt_tokens, completion_tokens)
 
-        # Log the assessment and certainty level to the terminal
-        logging.info(f"Assessed Message: '{text}', Decision: {decision}, Total: {total_certainty}%")
+        forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
+        action = "FORWARDED" if forwarded else "NOT_FORWARDED"
+
+        logging.info(
+            f"EVALUATED | channel={channel_id} ts={ts} | "
+            f"keywords={matched_keywords} | "
+            f"model={Config.OPENAI_MODEL} | "
+            f"decision={decision} certainty={total_certainty}% | "
+            f"tokens={prompt_tokens}+{completion_tokens} cost=${cost:.6f} | "
+            f"action={action}"
+        )
 
         # Routing logic
-        if decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD:
+        if forwarded:
             send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
 
 # URL Verification route

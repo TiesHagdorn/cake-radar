@@ -50,7 +50,7 @@ class TestDeduplication(unittest.TestCase):
         """Verify that messages with same channel_id and ts are ignored."""
         # Setup mock
         mock_say = MagicMock()
-        mock_assess.return_value = {'decision': 'no', 'total_certainty': 0}
+        mock_assess.return_value = {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
         
         # Message 1
         msg1 = {'text': 'cake', 'channel': 'C1', 'ts': '1000.00'}
