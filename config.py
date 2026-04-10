@@ -26,7 +26,7 @@ class Config:
 
     # Daily summary
     SUMMARY_USER_ID = os.getenv("SUMMARY_USER_ID")
-    SUMMARY_HOUR = int(os.getenv("SUMMARY_HOUR", "17"))
+    SUMMARY_TIME = os.getenv("SUMMARY_TIME", "17:00")
 
     # App Settings
     PORT = int(os.getenv("PORT", 3000))
