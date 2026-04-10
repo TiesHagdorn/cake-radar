@@ -214,6 +214,9 @@ def _daily_summary_loop():
         send_daily_summary()
 
 
+# Start daily summary background thread
+threading.Thread(target=_daily_summary_loop, daemon=True).start()
+
 # Listen for new messages
 @app.message()
 def handle_message(message, say):
@@ -315,6 +318,4 @@ if __name__ == "__main__":
         print("\nBye! 👋")
         sys.exit(0)
 
-    t = threading.Thread(target=_daily_summary_loop, daemon=True)
-    t.start()
     flask_app.run(host='0.0.0.0', port=Config.PORT)
