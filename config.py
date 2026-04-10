@@ -19,7 +19,7 @@ class Config:
     ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "#cake-radar")
 
     # AI Settings
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-nano")
     CERTAINTY_THRESHOLD = int(os.getenv("CERTAINTY_THRESHOLD", "85"))
 
     # App Settings
