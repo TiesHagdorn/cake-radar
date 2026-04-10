@@ -31,9 +31,9 @@ flask_app = Flask(__name__)
 flask_app.logger.disabled = True
 handler = SlackRequestHandler(app)
 
-# Suppress Flask's default HTTP access logs
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
+# Suppress noisy third-party loggers
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 def download_slack_images(files: list, max_images: int = 1) -> List[str]:
     """Download image attachments from a Slack message and return as base64 data URIs."""
@@ -121,14 +121,47 @@ def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, o
     except Exception as e:
         logging.error(f"Error sending message to {target_channel}: {e}")
 
-# Listen for messages and check for keywords
+def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, say):
+    """Run keyword matching, AI evaluation, logging, and forwarding for a message."""
+    text = original_text.lower()
+
+    matched_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
+    if not matched_keywords:
+        return
+
+    image_data_uris = download_slack_images(files)
+    result = assess_certainty(text, image_data_uris)
+
+    decision = result['decision']
+    total_certainty = result['total_certainty']
+    prompt_tokens = result['prompt_tokens']
+    completion_tokens = result['completion_tokens']
+    cost = calculate_cost(prompt_tokens, completion_tokens)
+
+    forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
+    action = "FORWARDED" if forwarded else "NOT_FORWARDED"
+
+    logging.info(
+        f"EVALUATED | channel={channel_id} ts={ts} | "
+        f"message='{original_text}' | "
+        f"keywords={matched_keywords} | images={len(image_data_uris)} | "
+        f"model={Config.OPENAI_MODEL} | "
+        f"decision={decision} certainty={total_certainty}% | "
+        f"tokens={prompt_tokens}+{completion_tokens} cost=${cost:.6f} | "
+        f"action={action}"
+    )
+
+    if forwarded:
+        send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
+
+
+# Listen for new messages
 @app.message()
 def handle_message(message, say):
     original_text = message.get('text', '')
-    text = original_text.lower()
     channel_id = message['channel']
-    ts = message['ts']                          # Timestamp of the message
-    thread_ts = message.get('thread_ts')        # Check if the message is a thread reply
+    ts = message['ts']
+    thread_ts = message.get('thread_ts')
 
     # Deduplicate messages to prevent handling retries
     if (channel_id, ts) in processed_messages:
@@ -136,48 +169,41 @@ def handle_message(message, say):
         return
     processed_messages.append((channel_id, ts))
 
-    # Exclude messages in threads
+    # Exclude thread replies
     if thread_ts and thread_ts != ts:
         logging.info(f"SKIP thread_reply | channel={channel_id} ts={ts}")
         return
 
-    # Check if the message is from the #cake-radar channel
+    # Exclude messages from #cake-radar itself
     if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
         logging.info(f"SKIP cake-radar channel | ts={ts}")
         return
 
-    # Check for keywords using regex
-    matched_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
-    if matched_keywords:
+    evaluate_message(original_text, channel_id, ts, message.get('files', []), say)
 
-        # Download any image attachments
-        image_data_uris = download_slack_images(message.get('files', []))
 
-        # Assess the certainty of the message
-        result = assess_certainty(text, image_data_uris)
+# Listen for edited messages
+@app.event("message")
+def handle_message_events(event, say):
+    subtype = event.get('subtype')
 
-        decision = result['decision']
-        total_certainty = result['total_certainty']
-        prompt_tokens = result['prompt_tokens']
-        completion_tokens = result['completion_tokens']
-        cost = calculate_cost(prompt_tokens, completion_tokens)
+    if subtype == 'message_changed':
+        updated = event.get('message', {})
+        original_text = updated.get('text', '')
+        channel_id = event.get('channel', '')
+        ts = updated.get('ts', '')
 
-        forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
-        action = "FORWARDED" if forwarded else "NOT_FORWARDED"
+        # Remove old dedup entry so the edited version is evaluated fresh
+        key = (channel_id, ts)
+        if key in processed_messages:
+            processed_messages.remove(key)
+        processed_messages.append(key)
 
-        logging.info(
-            f"EVALUATED | channel={channel_id} ts={ts} | "
-            f"message='{original_text}' | "
-            f"keywords={matched_keywords} | images={len(image_data_uris)} | "
-            f"model={Config.OPENAI_MODEL} | "
-            f"decision={decision} certainty={total_certainty}% | "
-            f"tokens={prompt_tokens}+{completion_tokens} cost=${cost:.6f} | "
-            f"action={action}"
-        )
+        if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
+            return
 
-        # Routing logic
-        if forwarded:
-            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
+        logging.info(f"MESSAGE_CHANGED | channel={channel_id} ts={ts}")
+        evaluate_message(original_text, channel_id, ts, updated.get('files', []), say)
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
