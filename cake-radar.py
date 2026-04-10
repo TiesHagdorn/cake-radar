@@ -138,6 +138,7 @@ def handle_message(message, say):
 
         logging.info(
             f"EVALUATED | channel={channel_id} ts={ts} | "
+            f"message='{original_text}' | "
             f"keywords={matched_keywords} | "
             f"model={Config.OPENAI_MODEL} | "
             f"decision={decision} certainty={total_certainty}% | "
