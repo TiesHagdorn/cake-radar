@@ -78,13 +78,8 @@ def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, o
     message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
     certainty_info = f"Certainty: {certainty}%"
     
-    if "yes" in decision:
-        icon = ":green-light-blinker:"
-        title = "Cake Alert!"
-    else:
-        icon = ":red_circle:"
-        title = "False Alarm"
-        
+    icon = ":green-light-blinker:"
+    title = "Cake Alert!"
     full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})"
     
     try:
@@ -135,8 +130,6 @@ def handle_message(message, say):
         # Routing logic
         if decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD:
             send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
-        elif decision and "no" in decision:
-            send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.FALSE_ALARM_CHANNEL, original_text)
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
