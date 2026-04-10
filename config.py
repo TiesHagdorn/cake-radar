@@ -17,7 +17,6 @@ class Config:
     # Channels
     CAKE_RADAR_CHANNEL_ID = os.getenv("CAKE_RADAR_CHANNEL_ID", "C07RTPCLAKC")
     ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "#cake-radar")
-    FALSE_ALARM_CHANNEL = os.getenv("FALSE_ALARM_CHANNEL", "#241126-cake-radar-false-alarms")
 
     # AI Settings
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
