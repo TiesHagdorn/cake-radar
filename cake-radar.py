@@ -200,11 +200,12 @@ def send_daily_summary():
 
 
 def _daily_summary_loop():
-    """Background thread: sleep until 17:00 Amsterdam time, send summary, repeat."""
+    """Background thread: sleep until SUMMARY_TIME Amsterdam time, send summary, repeat."""
     tz = ZoneInfo("Europe/Amsterdam")
+    hour, minute = (int(x) for x in Config.SUMMARY_TIME.split(':'))
     while True:
         now = datetime.now(tz)
-        target = now.replace(hour=Config.SUMMARY_HOUR, minute=0, second=0, microsecond=0)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if now >= target:
             target += timedelta(days=1)
         sleep_seconds = (target - now).total_seconds()
