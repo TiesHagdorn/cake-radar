@@ -5,7 +5,9 @@ from openai import OpenAI
 import logging
 import re
 import base64
+import io
 import requests
+from PIL import Image
 import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -82,6 +84,8 @@ logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
 logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
+OPENAI_SUPPORTED_IMAGE_TYPES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
+
 def download_slack_images(files: list, max_images: int = 1) -> List[str]:
     """Download image attachments from a Slack message and return as base64 data URIs."""
     data_uris = []
@@ -95,8 +99,19 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
         try:
             response = requests.get(url, headers={'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}, timeout=10)
             response.raise_for_status()
-            encoded = base64.b64encode(response.content).decode('utf-8')
-            data_uris.append(f"data:{mimetype};base64,{encoded}")
+            if mimetype in OPENAI_SUPPORTED_IMAGE_TYPES:
+                encoded = base64.b64encode(response.content).decode('utf-8')
+                data_uris.append(f"data:{mimetype};base64,{encoded}")
+            else:
+                try:
+                    img = Image.open(io.BytesIO(response.content)).convert('RGB')
+                    buf = io.BytesIO()
+                    img.save(buf, 'JPEG')
+                    encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
+                    data_uris.append(f"data:image/jpeg;base64,{encoded}")
+                    logging.warning(f"Converted {mimetype} image to JPEG for OpenAI compatibility")
+                except Exception as conv_err:
+                    logging.warning(f"Could not convert {mimetype} image, skipping: {conv_err}")
         except Exception as e:
             logging.error(f"Failed to download Slack image: {e}")
     return data_uris
@@ -126,14 +141,30 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
     else:
         user_content = prompt_text
 
-    try:
-        response = client.chat.completions.create(
+    def _call_openai(content):
+        return client.chat.completions.create(
             model=Config.OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": Config.SYSTEM_PROMPT},
-                {"role": "user", "content": user_content}
+                {"role": "user", "content": content}
             ]
         )
+
+    try:
+        response = _call_openai(user_content)
+    except Exception as e:
+        if image_data_uris:
+            logging.warning(f"OpenAI image error, retrying without images: {e}")
+            try:
+                response = _call_openai(prompt_text)
+            except Exception as e2:
+                logging.error(f"Error assessing certainty: {e2}")
+                return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
+        else:
+            logging.error(f"Error assessing certainty: {e}")
+            return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
+
+    try:
         assessment = response.choices[0].message.content.strip().lower()
         if ',' in assessment:
             decision_part, certainty_str = assessment.split(',')
@@ -144,7 +175,7 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
         prompt_tokens = response.usage.prompt_tokens
         completion_tokens = response.usage.completion_tokens
     except Exception as e:
-        logging.error(f"Error assessing certainty: {e}")
+        logging.error(f"Error parsing OpenAI response: {e}")
         return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
 
     return {
