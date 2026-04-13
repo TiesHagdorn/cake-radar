@@ -48,6 +48,7 @@ handler = SlackRequestHandler(app)
 
 # Suppress noisy third-party loggers
 logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
+logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
 def download_slack_images(files: list, max_images: int = 1) -> List[str]:
