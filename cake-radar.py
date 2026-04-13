@@ -16,7 +16,7 @@ from config import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s %(levelname)-7s %(message)s',
+                    format='%(levelname)-7s %(message)s',
                     handlers=[logging.StreamHandler()])
 
 # Initialize Config
@@ -29,6 +29,24 @@ processed_messages = deque(maxlen=1000)
 
 # Track forwarded messages: (channel_id, ts) -> set of matched keywords
 forwarded_messages = {}
+
+# Channel name cache: id -> "#name"
+_channel_name_cache: Dict[str, str] = {}
+
+def _channel_name(channel_id: str) -> str:
+    if channel_id not in _channel_name_cache:
+        try:
+            result = app.client.conversations_info(channel=channel_id)
+            _channel_name_cache[channel_id] = '#' + result['channel']['name']
+        except Exception:
+            _channel_name_cache[channel_id] = channel_id
+    return _channel_name_cache[channel_id]
+
+def _fmt_ts(ts: str) -> str:
+    try:
+        return datetime.fromtimestamp(float(ts), tz=ZoneInfo("Europe/Amsterdam")).strftime("%H:%M")
+    except Exception:
+        return ts
 
 # Daily stats accumulator
 daily_stats = {
@@ -158,7 +176,7 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
 
     logging.info(
-        f"EVALUATED | channel={channel_id} ts={ts} | "
+        f"EVALUATED | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)} | "
         f"message='{original_text}' | "
         f"keywords={matched_keywords} | images={len(image_data_uris)} | "
         f"model={Config.OPENAI_MODEL} | "
@@ -227,13 +245,13 @@ def handle_message(message, say):
 
     # Deduplicate messages to prevent handling retries
     if (channel_id, ts) in processed_messages:
-        logging.info(f"SKIP duplicate | channel={channel_id} ts={ts}")
+        logging.info(f"SKIP duplicate | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
         return
     processed_messages.append((channel_id, ts))
 
     # Exclude thread replies
     if thread_ts and thread_ts != ts:
-        logging.info(f"SKIP thread_reply | channel={channel_id} ts={ts}")
+        logging.info(f"SKIP thread_reply | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
         return
 
     # Exclude messages from #cake-radar itself
@@ -267,7 +285,7 @@ def handle_message_events(event, say):
         # Exclude thread replies
         thread_ts = updated.get('thread_ts')
         if thread_ts and thread_ts != ts:
-            logging.info(f"SKIP thread_reply (edit) | channel={channel_id} ts={ts}")
+            logging.info(f"SKIP thread_reply (edit) | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
             return
 
         # If already forwarded, only re-evaluate if the edit introduces new cake keywords
@@ -275,10 +293,10 @@ def handle_message_events(event, say):
             text_lower = original_text.lower()
             new_keywords = {k for k in Config.KEYWORDS if re.search(rf"{k}", text_lower, re.IGNORECASE)}
             if not new_keywords - forwarded_messages[key]:
-                logging.info(f"SKIP edit (no new keywords) | channel={channel_id} ts={ts}")
+                logging.info(f"SKIP edit (no new keywords) | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
                 return
 
-        logging.info(f"MESSAGE_CHANGED | channel={channel_id} ts={ts}")
+        logging.info(f"MESSAGE_CHANGED | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
         evaluate_message(original_text, channel_id, ts, updated.get('files', []), say)
 
 # URL Verification route
