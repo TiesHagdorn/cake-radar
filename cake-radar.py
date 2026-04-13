@@ -220,10 +220,11 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
     label = "EVALUATED (edit)" if is_edit else "EVALUATED"
 
+    flat_text = ' '.join(original_text.split())
     logging.info(
-        f"{label} | {_channel_name(channel_id)} | {_fmt_ts(ts)} | {_user_name(user_id)} | "
-        f'"{original_text}" | keywords={matched_keywords} | '
-        f"AI={decision} {total_certainty}% | {action}"
+        f"{label} | {action} | AI={decision} {total_certainty}% | "
+        f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "
+        f'{_user_name(user_id)} | "{flat_text}"'
     )
 
     daily_stats['messages_evaluated'] += 1
