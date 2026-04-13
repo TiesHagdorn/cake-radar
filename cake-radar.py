@@ -27,6 +27,9 @@ Config.load_keywords()
 # Track processed messages to handle Slack retries
 processed_messages = deque(maxlen=1000)
 
+# Track forwarded messages: (channel_id, ts) -> set of matched keywords
+forwarded_messages = {}
+
 # Daily stats accumulator
 daily_stats = {
     'messages_evaluated': 0,
@@ -170,6 +173,7 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     if forwarded:
         daily_stats['messages_forwarded'] += 1
+        forwarded_messages[(channel_id, ts)] = set(matched_keywords)
         send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
 
 
@@ -258,6 +262,14 @@ def handle_message_events(event, say):
 
         if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
             return
+
+        # If already forwarded, only re-evaluate if the edit introduces new cake keywords
+        if key in forwarded_messages:
+            text_lower = original_text.lower()
+            new_keywords = {k for k in Config.KEYWORDS if re.search(rf"{k}", text_lower, re.IGNORECASE)}
+            if not new_keywords - forwarded_messages[key]:
+                logging.info(f"SKIP edit (no new keywords) | channel={channel_id} ts={ts}")
+                return
 
         logging.info(f"MESSAGE_CHANGED | channel={channel_id} ts={ts}")
         evaluate_message(original_text, channel_id, ts, updated.get('files', []), say)
