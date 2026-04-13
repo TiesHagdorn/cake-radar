@@ -264,6 +264,12 @@ def handle_message_events(event, say):
         if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
             return
 
+        # Exclude thread replies
+        thread_ts = updated.get('thread_ts')
+        if thread_ts and thread_ts != ts:
+            logging.info(f"SKIP thread_reply (edit) | channel={channel_id} ts={ts}")
+            return
+
         # If already forwarded, only re-evaluate if the edit introduces new cake keywords
         if key in forwarded_messages:
             text_lower = original_text.lower()
