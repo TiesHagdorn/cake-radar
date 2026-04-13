@@ -42,6 +42,19 @@ def _channel_name(channel_id: str) -> str:
             _channel_name_cache[channel_id] = channel_id
     return _channel_name_cache[channel_id]
 
+_user_name_cache: Dict[str, str] = {}
+
+def _user_name(user_id: str) -> str:
+    if user_id not in _user_name_cache:
+        try:
+            result = app.client.users_info(user=user_id)
+            profile = result['user']['profile']
+            name = profile.get('display_name') or profile.get('real_name') or user_id
+            _user_name_cache[user_id] = '@' + name
+        except Exception:
+            _user_name_cache[user_id] = '@' + user_id
+    return _user_name_cache[user_id]
+
 def _fmt_ts(ts: str) -> str:
     try:
         return datetime.fromtimestamp(float(ts), tz=ZoneInfo("Europe/Amsterdam")).strftime("%H:%M")
@@ -155,7 +168,7 @@ def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, o
     except Exception as e:
         logging.error(f"Error sending message to {target_channel}: {e}")
 
-def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, say):
+def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, say, user_id: str = '', is_edit: bool = False):
     """Run keyword matching, AI evaluation, logging, and forwarding for a message."""
     text = original_text.lower()
 
@@ -174,15 +187,12 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
+    label = "EVALUATED (edit)" if is_edit else "EVALUATED"
 
     logging.info(
-        f"EVALUATED | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)} | "
-        f"message='{original_text}' | "
-        f"keywords={matched_keywords} | images={len(image_data_uris)} | "
-        f"model={Config.OPENAI_MODEL} | "
-        f"decision={decision} certainty={total_certainty}% | "
-        f"tokens={prompt_tokens}+{completion_tokens} cost=${cost:.6f} | "
-        f"action={action}"
+        f"{label} | {_channel_name(channel_id)} | {_fmt_ts(ts)} | {_user_name(user_id)} | "
+        f'"{original_text}" | keywords={matched_keywords} | '
+        f"AI={decision} {total_certainty}% | {action}"
     )
 
     daily_stats['messages_evaluated'] += 1
@@ -242,24 +252,22 @@ def handle_message(message, say):
     channel_id = message['channel']
     ts = message['ts']
     thread_ts = message.get('thread_ts')
+    user_id = message.get('user', '')
 
     # Deduplicate messages to prevent handling retries
     if (channel_id, ts) in processed_messages:
-        logging.info(f"SKIP duplicate | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
         return
     processed_messages.append((channel_id, ts))
 
     # Exclude thread replies
     if thread_ts and thread_ts != ts:
-        logging.info(f"SKIP thread_reply | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
         return
 
     # Exclude messages from #cake-radar itself
     if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
-        logging.info(f"SKIP cake-radar channel | ts={ts}")
         return
 
-    evaluate_message(original_text, channel_id, ts, message.get('files', []), say)
+    evaluate_message(original_text, channel_id, ts, message.get('files', []), say, user_id=user_id)
 
 
 # Listen for edited messages
@@ -272,6 +280,7 @@ def handle_message_events(event, say):
         original_text = updated.get('text', '')
         channel_id = event.get('channel', '')
         ts = updated.get('ts', '')
+        user_id = updated.get('user', '')
 
         # Remove old dedup entry so the edited version is evaluated fresh
         key = (channel_id, ts)
@@ -285,7 +294,6 @@ def handle_message_events(event, say):
         # Exclude thread replies
         thread_ts = updated.get('thread_ts')
         if thread_ts and thread_ts != ts:
-            logging.info(f"SKIP thread_reply (edit) | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
             return
 
         # If already forwarded, only re-evaluate if the edit introduces new cake keywords
@@ -293,11 +301,9 @@ def handle_message_events(event, say):
             text_lower = original_text.lower()
             new_keywords = {k for k in Config.KEYWORDS if re.search(rf"{k}", text_lower, re.IGNORECASE)}
             if not new_keywords - forwarded_messages[key]:
-                logging.info(f"SKIP edit (no new keywords) | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
                 return
 
-        logging.info(f"MESSAGE_CHANGED | channel={_channel_name(channel_id)} ts={_fmt_ts(ts)}")
-        evaluate_message(original_text, channel_id, ts, updated.get('files', []), say)
+        evaluate_message(original_text, channel_id, ts, updated.get('files', []), say, user_id=user_id, is_edit=True)
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
