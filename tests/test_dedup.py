@@ -41,12 +41,12 @@ class TestDeduplication(unittest.TestCase):
     def setUp(self):
         """Clear state before each test."""
         cake_radar.processed_messages.clear()
-        cake_radar.forwarded_messages.clear()
+        cake_radar.evaluated_messages.clear()
 
     def tearDown(self):
         """Clear state after each test."""
         cake_radar.processed_messages.clear()
-        cake_radar.forwarded_messages.clear()
+        cake_radar.evaluated_messages.clear()
 
     @patch('cake_radar.assess_certainty')
     def test_deduplication_logic(self, mock_assess):
@@ -85,7 +85,7 @@ class TestDeduplication(unittest.TestCase):
         msg = {'text': 'cake in the kitchen', 'channel': 'C1', 'ts': '1000.00'}
         cake_radar.handle_message(msg, mock_say)
         self.assertEqual(mock_assess.call_count, 1)
-        self.assertIn(('C1', '1000.00'), cake_radar.forwarded_messages)
+        self.assertIn(('C1', '1000.00'), cake_radar.evaluated_messages)
 
         # Edit the message — same keywords, just minor rewording
         edit_event = {
@@ -130,14 +130,33 @@ class TestDeduplication(unittest.TestCase):
         msg = {'text': 'cake?', 'channel': 'C1', 'ts': '3000.00'}
         cake_radar.handle_message(msg, mock_say)
         self.assertEqual(mock_assess.call_count, 1)
-        self.assertNotIn(('C1', '3000.00'), cake_radar.forwarded_messages)
+        self.assertIn(('C1', '3000.00'), cake_radar.evaluated_messages)
 
-        # Now edit it — should be re-evaluated since it was never forwarded
-        mock_assess.return_value = {'decision': 'yes', 'total_certainty': 92, 'prompt_tokens': 10, 'completion_tokens': 5}
+        # Edit with same keywords — should be suppressed
         edit_event = {
             'subtype': 'message_changed',
             'channel': 'C1',
             'message': {'text': 'cake is in the kitchen!', 'ts': '3000.00', 'files': []}
+        }
+        cake_radar.handle_message_events(edit_event, mock_say)
+        self.assertEqual(mock_assess.call_count, 1)
+
+    @patch('cake_radar.assess_certainty')
+    def test_edit_not_forwarded_new_keyword_triggers_reevaluation(self, mock_assess):
+        """Edited non-forwarded message with a new keyword should be re-evaluated."""
+        mock_say = MagicMock()
+        mock_assess.return_value = {'decision': 'no', 'total_certainty': 40, 'prompt_tokens': 10, 'completion_tokens': 5}
+
+        msg = {'text': 'cake?', 'channel': 'C1', 'ts': '3000.00'}
+        cake_radar.handle_message(msg, mock_say)
+        self.assertEqual(mock_assess.call_count, 1)
+
+        # Edit adds a new keyword — should be re-evaluated
+        mock_assess.return_value = {'decision': 'yes', 'total_certainty': 92, 'prompt_tokens': 10, 'completion_tokens': 5}
+        edit_event = {
+            'subtype': 'message_changed',
+            'channel': 'C1',
+            'message': {'text': 'cake and baklava in the kitchen!', 'ts': '3000.00', 'files': []}
         }
         cake_radar.handle_message_events(edit_event, mock_say)
         self.assertEqual(mock_assess.call_count, 2)
