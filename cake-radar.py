@@ -31,8 +31,8 @@ Config.load_keywords()
 # Track processed messages to handle Slack retries
 processed_messages = deque(maxlen=1000)
 
-# Track forwarded messages: (channel_id, ts) -> set of matched keywords
-forwarded_messages = {}
+# Track evaluated messages: (channel_id, ts) -> set of matched keywords (used to suppress duplicate edit logs)
+evaluated_messages = {}
 
 # Channel name cache: id -> "#name"
 _channel_name_cache: Dict[str, str] = {}
@@ -233,9 +233,10 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     daily_stats['total_completion_tokens'] += completion_tokens
     daily_stats['total_cost'] += cost
 
+    evaluated_messages[(channel_id, ts)] = set(matched_keywords)
+
     if forwarded:
         daily_stats['messages_forwarded'] += 1
-        forwarded_messages[(channel_id, ts)] = set(matched_keywords)
         send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
 
 
@@ -329,11 +330,11 @@ def handle_message_events(event, say):
         if thread_ts and thread_ts != ts:
             return
 
-        # If already forwarded, only re-evaluate if the edit introduces new cake keywords
-        if key in forwarded_messages:
+        # If already evaluated, only re-evaluate if the edit introduces new cake keywords
+        if key in evaluated_messages:
             text_lower = original_text.lower()
             new_keywords = {k for k in Config.KEYWORDS if re.search(rf"{k}", text_lower, re.IGNORECASE)}
-            if not new_keywords - forwarded_messages[key]:
+            if not new_keywords - evaluated_messages[key]:
                 return
 
         evaluate_message(original_text, channel_id, ts, updated.get('files', []), say, user_id=user_id, is_edit=True)
