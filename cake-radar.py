@@ -84,6 +84,7 @@ handler = SlackRequestHandler(app)
 # Suppress noisy third-party loggers
 logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
 logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
+logging.getLogger('gunicorn.error').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
 _PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif', 'WEBP': 'image/webp'}
