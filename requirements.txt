@@ -26,3 +26,4 @@ typing_extensions==4.12.2
 Werkzeug==3.1.0
 requests
 Pillow
+pillow-heif
