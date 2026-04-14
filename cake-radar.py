@@ -8,6 +8,8 @@ import base64
 import io
 import requests
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener()
 import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -84,7 +86,7 @@ logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
 logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
-OPENAI_SUPPORTED_IMAGE_TYPES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
+_PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif', 'WEBP': 'image/webp'}
 
 def download_slack_images(files: list, max_images: int = 1) -> List[str]:
     """Download image attachments from a Slack message and return as base64 data URIs."""
@@ -99,19 +101,18 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
         try:
             response = requests.get(url, headers={'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}, timeout=10)
             response.raise_for_status()
-            if mimetype in OPENAI_SUPPORTED_IMAGE_TYPES:
-                encoded = base64.b64encode(response.content).decode('utf-8')
-                data_uris.append(f"data:{mimetype};base64,{encoded}")
-            else:
-                try:
-                    img = Image.open(io.BytesIO(response.content)).convert('RGB')
-                    buf = io.BytesIO()
-                    img.save(buf, 'JPEG')
-                    encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
-                    data_uris.append(f"data:image/jpeg;base64,{encoded}")
-                    logging.warning(f"Converted {mimetype} image to JPEG for OpenAI compatibility")
-                except Exception as conv_err:
-                    logging.warning(f"Could not convert {mimetype} image, skipping: {conv_err}")
+            try:
+                img = Image.open(io.BytesIO(response.content))
+                out_mimetype = _PILLOW_TO_OPENAI.get(img.format, 'image/jpeg')
+                out_format = img.format if img.format in _PILLOW_TO_OPENAI else 'JPEG'
+                if out_format == 'JPEG':
+                    img = img.convert('RGB')
+                buf = io.BytesIO()
+                img.save(buf, out_format)
+                encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
+                data_uris.append(f"data:{out_mimetype};base64,{encoded}")
+            except Exception as conv_err:
+                logging.warning(f"Could not process {mimetype} image, skipping: {conv_err}")
         except Exception as e:
             logging.error(f"Failed to download Slack image: {e}")
     return data_uris
