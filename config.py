@@ -24,10 +24,6 @@ class Config:
     INPUT_COST_PER_MTOK = float(os.getenv("INPUT_COST_PER_MTOK", "0.20"))
     OUTPUT_COST_PER_MTOK = float(os.getenv("OUTPUT_COST_PER_MTOK", "1.25"))
 
-    # Daily summary
-    SUMMARY_CHANNEL_ID = os.getenv("SUMMARY_CHANNEL_ID", "C0AF1HYSSJG")
-    SUMMARY_TIME = os.getenv("SUMMARY_TIME", "17:00")
-
     # App Settings
     PORT = int(os.getenv("PORT", 3000))
     

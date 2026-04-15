@@ -45,11 +45,8 @@ CI only runs `test_dedup.py`. `test_radar.py` is not in the CI workflow.
 **In-memory state (no database):**
 - `processed_messages` — `deque(maxlen=1000)` for Slack retry deduplication
 - `evaluated_messages` — `dict[(channel_id, ts) → set[keywords]]` to suppress duplicate logs/alerts on edited messages
-- `daily_stats` — accumulator reset after each 17:00 Amsterdam summary post
 
 **Slack integration:** Uses `slack_bolt` with a Flask adapter. Events arrive via HTTP POST to `/slack/events`.
-
-**Scheduling:** A daemon thread sleeps until `SUMMARY_TIME` (default `17:00`) and posts daily stats to `SUMMARY_CHANNEL_ID`.
 
 ## Environment Variables
 
@@ -61,7 +58,7 @@ SLACK_SIGNING_SECRET=
 OPENAI_API_KEY=
 ```
 
-Optional overrides (see `config.py` for defaults): `OPENAI_MODEL`, `CERTAINTY_THRESHOLD`, `CAKE_RADAR_CHANNEL_ID`, `ALERT_CHANNEL`, `SUMMARY_CHANNEL_ID`, `SUMMARY_TIME`, `PORT`.
+Optional overrides (see `config.py` for defaults): `OPENAI_MODEL`, `CERTAINTY_THRESHOLD`, `CAKE_RADAR_CHANNEL_ID`, `ALERT_CHANNEL`, `PORT`.
 
 ## Import Note
 
