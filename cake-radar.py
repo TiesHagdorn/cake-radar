@@ -10,8 +10,7 @@ import requests
 from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener()
-import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional, Tuple, Dict, List
 import os
@@ -64,15 +63,6 @@ def _fmt_ts(ts: str) -> str:
         return datetime.fromtimestamp(float(ts), tz=ZoneInfo("Europe/Amsterdam")).strftime("%H:%M")
     except Exception:
         return ts
-
-# Daily stats accumulator
-daily_stats = {
-    'messages_evaluated': 0,
-    'messages_forwarded': 0,
-    'total_prompt_tokens': 0,
-    'total_completion_tokens': 0,
-    'total_cost': 0.0,
-}
 
 # Initialize the Slack app and Flask app
 app = App(token=Config.SLACK_BOT_TOKEN, signing_secret=Config.SLACK_SIGNING_SECRET)
@@ -229,56 +219,11 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
         f'{_user_name(user_id)} | "{flat_text}"'
     )
 
-    daily_stats['messages_evaluated'] += 1
-    daily_stats['total_prompt_tokens'] += prompt_tokens
-    daily_stats['total_completion_tokens'] += completion_tokens
-    daily_stats['total_cost'] += cost
-
     evaluated_messages[(channel_id, ts)] = set(matched_keywords)
 
     if forwarded:
-        daily_stats['messages_forwarded'] += 1
         send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
 
-
-def send_daily_summary():
-    """Send a daily summary to the summary channel and reset stats."""
-    try:
-        date_str = datetime.now(ZoneInfo("Europe/Amsterdam")).strftime("%-d %b %Y")
-        text = (
-            f"*Cake Radar \u2014 Daily Summary ({date_str})*\n"
-            f"Messages evaluated: {daily_stats['messages_evaluated']}\n"
-            f"Forwarded to #cake-radar: {daily_stats['messages_forwarded']}\n"
-            f"Total tokens: {daily_stats['total_prompt_tokens'] + daily_stats['total_completion_tokens']:,} "
-            f"({daily_stats['total_prompt_tokens']:,} in + {daily_stats['total_completion_tokens']:,} out)\n"
-            f"Estimated cost: ${daily_stats['total_cost']:.4f}"
-        )
-        app.client.chat_postMessage(channel=Config.SUMMARY_CHANNEL_ID, text=text)
-        logging.info(f"Daily summary sent to {Config.SUMMARY_CHANNEL_ID}")
-    except Exception as e:
-        logging.error(f"Failed to send daily summary: {e}")
-    finally:
-        for key in daily_stats:
-            daily_stats[key] = 0 if isinstance(daily_stats[key], int) else 0.0
-
-
-def _daily_summary_loop():
-    """Background thread: sleep until SUMMARY_TIME Amsterdam time, send summary, repeat."""
-    tz = ZoneInfo("Europe/Amsterdam")
-    hour, minute = (int(x) for x in Config.SUMMARY_TIME.split(':'))
-    while True:
-        now = datetime.now(tz)
-        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-        sleep_seconds = (target - now).total_seconds()
-        logging.info(f"Daily summary scheduled in {sleep_seconds/3600:.1f}h (at {target.strftime('%H:%M %Z')})")
-        threading.Event().wait(sleep_seconds)
-        send_daily_summary()
-
-
-# Start daily summary background thread
-threading.Thread(target=_daily_summary_loop, daemon=True).start()
 
 # Listen for new messages
 @app.message()
