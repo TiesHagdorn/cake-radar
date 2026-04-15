@@ -2,7 +2,6 @@ import pytest
 import re
 import sys
 import os
-import json
 from unittest.mock import MagicMock, patch
 
 # Add the project root to sys.path so we can import modules

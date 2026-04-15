@@ -8,7 +8,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import cake-radar
 # Mock dependencies if they don't exist
-from unittest.mock import MagicMock
 sys.modules['slack_bolt'] = MagicMock()
 sys.modules['slack_bolt.adapter.flask'] = MagicMock()
 sys.modules['flask'] = MagicMock()
@@ -29,7 +28,6 @@ sys.modules['slack_bolt'].App.return_value = mock_app_instance
 
 # Set dummy env vars to pass Config.validate()
 os.environ['SLACK_BOT_TOKEN'] = 'xoxb-dummy'
-os.environ['SLACK_APP_TOKEN'] = 'xapp-dummy'
 os.environ['SLACK_SIGNING_SECRET'] = 'dummy'
 os.environ['OPENAI_API_KEY'] = 'dummy'
 
