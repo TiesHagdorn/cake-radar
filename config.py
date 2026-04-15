@@ -10,7 +10,6 @@ class Config:
     """Central configuration for the Cake Radar bot."""
     # Secrets
     SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
-    SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
     SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -21,8 +20,6 @@ class Config:
     # AI Settings
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-nano")
     CERTAINTY_THRESHOLD = int(os.getenv("CERTAINTY_THRESHOLD", "85"))
-    INPUT_COST_PER_MTOK = float(os.getenv("INPUT_COST_PER_MTOK", "0.20"))
-    OUTPUT_COST_PER_MTOK = float(os.getenv("OUTPUT_COST_PER_MTOK", "1.25"))
 
     # App Settings
     PORT = int(os.getenv("PORT", 3000))
@@ -46,7 +43,7 @@ class Config:
 
     @classmethod
     def validate(cls):
-        if not all([cls.SLACK_BOT_TOKEN, cls.SLACK_APP_TOKEN, cls.SLACK_SIGNING_SECRET, cls.OPENAI_API_KEY]):
+        if not all([cls.SLACK_BOT_TOKEN, cls.SLACK_SIGNING_SECRET, cls.OPENAI_API_KEY]):
             logging.error("One or more environment variables are missing!")
             return False
         return True

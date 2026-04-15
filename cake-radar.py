@@ -12,8 +12,7 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import Optional, Tuple, Dict, List
-import os
+from typing import Dict, List
 from collections import deque
 from config import Config
 
@@ -108,10 +107,6 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
             logging.error(f"Failed to download Slack image: {e}")
     return data_uris
 
-def calculate_cost(prompt_tokens: int, completion_tokens: int) -> float:
-    """Calculate the cost of an API call in dollars."""
-    return (prompt_tokens * Config.INPUT_COST_PER_MTOK + completion_tokens * Config.OUTPUT_COST_PER_MTOK) / 1_000_000
-
 # Function to assess certainty
 def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Dict:
     """Assess the likelihood of the message being about offering something.
@@ -177,7 +172,7 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
         'completion_tokens': completion_tokens,
     }
 
-def send_slack_alert(say, channel_id, ts, decision, certainty, target_channel, original_text):
+def send_slack_alert(say, channel_id, ts, certainty, target_channel):
     """Helper to format and send the Slack alert."""
     message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
     certainty_info = f"Certainty: {certainty}%"
@@ -204,9 +199,6 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     decision = result['decision']
     total_certainty = result['total_certainty']
-    prompt_tokens = result['prompt_tokens']
-    completion_tokens = result['completion_tokens']
-    cost = calculate_cost(prompt_tokens, completion_tokens)
 
     forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
@@ -222,7 +214,7 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     evaluated_messages[(channel_id, ts)] = set(matched_keywords)
 
     if forwarded:
-        send_slack_alert(say, channel_id, ts, decision, total_certainty, Config.ALERT_CHANNEL, original_text)
+        send_slack_alert(say, channel_id, ts, total_certainty, Config.ALERT_CHANNEL)
 
 
 # Listen for new messages
@@ -290,7 +282,6 @@ def handle_message_events(event, say):
 def slack_events():
     return handler.handle(request)
 
-# Start the Flask app
 # Start the Flask app or run in CLI mode
 if __name__ == "__main__":
     import argparse

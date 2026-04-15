@@ -53,7 +53,6 @@ CI only runs `test_dedup.py`. `test_radar.py` is not in the CI workflow.
 Required in `.env`:
 ```
 SLACK_BOT_TOKEN=
-SLACK_APP_TOKEN=
 SLACK_SIGNING_SECRET=
 OPENAI_API_KEY=
 ```
