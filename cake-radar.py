@@ -91,6 +91,10 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
         try:
             response = requests.get(url, headers={'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}, timeout=10)
             response.raise_for_status()
+            content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                logging.warning(f"Slack returned {content_type!r} (len={len(response.content)}) instead of image, skipping")
+                continue
             try:
                 img = Image.open(io.BytesIO(response.content))
                 out_mimetype = _PILLOW_TO_OPENAI.get(img.format, 'image/jpeg')
@@ -102,7 +106,7 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
                 encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
                 data_uris.append(f"data:{out_mimetype};base64,{encoded}")
             except Exception as conv_err:
-                logging.warning(f"Could not process {mimetype} image, skipping: {conv_err}")
+                logging.warning(f"Could not process {mimetype} image (Content-Type={content_type!r}, len={len(response.content)}), skipping: {conv_err}")
         except Exception as e:
             logging.error(f"Failed to download Slack image: {e}")
     return data_uris
