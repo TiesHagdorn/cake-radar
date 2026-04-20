@@ -85,7 +85,7 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
         if len(data_uris) >= max_images:
             break
         mimetype = f.get('mimetype', '')
-        url = f.get('url_private')
+        url = f.get('url_private_download') or f.get('url_private')
         if not mimetype.startswith('image/') or not url:
             continue
         try:
@@ -155,23 +155,25 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
             logging.error(f"Error assessing certainty: {e}")
             return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
 
+    reason = ''
     try:
         assessment = response.choices[0].message.content.strip().lower()
-        if ',' in assessment:
-            decision_part, certainty_str = assessment.split(',')
-            decision = decision_part.strip()
-            total_certainty = int(certainty_str.strip().replace('%', ''))
-        else:
-             decision = assessment
+        parts = [p.strip() for p in assessment.split(',')]
+        decision = parts[0]
+        if len(parts) >= 2:
+            total_certainty = int(parts[1].replace('%', ''))
+        if len(parts) >= 3:
+            reason = ', '.join(parts[2:])
         prompt_tokens = response.usage.prompt_tokens
         completion_tokens = response.usage.completion_tokens
     except Exception as e:
         logging.error(f"Error parsing OpenAI response: {e}")
-        return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
+        return {'decision': 'no', 'total_certainty': 0, 'reason': '', 'prompt_tokens': 0, 'completion_tokens': 0}
 
     return {
         'decision': decision,
         'total_certainty': total_certainty,
+        'reason': reason,
         'prompt_tokens': prompt_tokens,
         'completion_tokens': completion_tokens,
     }
@@ -203,14 +205,16 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     decision = result['decision']
     total_certainty = result['total_certainty']
+    reason = result.get('reason', '')
 
     forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
     label = "EVALUATED (edit)" if is_edit else "EVALUATED"
 
     flat_text = ' '.join(original_text.split())
+    reason_part = f" | reason={reason}" if reason else ""
     logging.info(
-        f"{label} | {action} | AI={decision} {total_certainty}% | "
+        f"{label} | {action} | AI={decision} {total_certainty}%{reason_part} | "
         f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "
         f'{_user_name(user_id)} | "{flat_text}"'
     )
