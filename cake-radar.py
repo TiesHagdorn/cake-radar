@@ -89,7 +89,12 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
         if not mimetype.startswith('image/') or not url:
             continue
         try:
-            response = requests.get(url, headers={'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}, timeout=10)
+            headers = {'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}
+            response = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
+            if response.is_redirect or response.is_permanent_redirect:
+                redirect_url = response.headers.get('Location')
+                if redirect_url:
+                    response = requests.get(redirect_url, headers=headers, timeout=10)
             response.raise_for_status()
             content_type = response.headers.get('Content-Type', '')
             if not content_type.startswith('image/'):
