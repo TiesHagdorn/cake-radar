@@ -94,7 +94,8 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
             if response.is_redirect or response.is_permanent_redirect:
                 redirect_url = response.headers.get('Location')
                 if redirect_url:
-                    response = requests.get(redirect_url, headers=headers, timeout=10)
+                    logging.debug(f"Image redirect: {url} -> {redirect_url}")
+                    response = requests.get(redirect_url, timeout=10)
             response.raise_for_status()
             content_type = response.headers.get('Content-Type', '')
             if not content_type.startswith('image/'):
