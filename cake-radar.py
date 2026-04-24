@@ -91,13 +91,19 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
         try:
             headers = {'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}
             response = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
+            logging.debug(f"Image fetch status={response.status_code} url={url[:80]}")
             if response.is_redirect or response.is_permanent_redirect:
                 redirect_url = response.headers.get('Location')
                 if redirect_url:
-                    logging.debug(f"Image redirect: {url} -> {redirect_url}")
+                    logging.debug(f"Image redirect -> {redirect_url[:80]}")
                     response = requests.get(redirect_url, timeout=10)
             response.raise_for_status()
             content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                logging.debug(f"Auth'd request returned HTML, retrying without auth: {response.content[:200]!r}")
+                response = requests.get(url, timeout=10, allow_redirects=True)
+                response.raise_for_status()
+                content_type = response.headers.get('Content-Type', '')
             if not content_type.startswith('image/'):
                 logging.warning(f"Slack returned {content_type!r} (len={len(response.content)}) instead of image, skipping")
                 continue
