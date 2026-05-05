@@ -193,10 +193,10 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
 def send_slack_alert(say, channel_id, ts, certainty, target_channel):
     """Helper to format and send the Slack alert."""
     message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
-    certainty_info = f"Certainty: {certainty}%"
-    
-    icon = ":green-light-blinker:"
-    title = "Cake Alert!"
+    certainty_info = f"{certainty}% certainty"
+
+    icon = ":cake-radar:"
+    title = "Cake detected!"
     full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})"
     
     try:
