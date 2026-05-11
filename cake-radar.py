@@ -208,7 +208,7 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     """Run keyword matching, AI evaluation, logging, and forwarding for a message."""
     text = original_text.lower()
 
-    matched_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
+    matched_keywords = [k for k in Config.KEYWORDS if re.search(rf"\b{k}\b", text, re.IGNORECASE)]
     if not matched_keywords:
         return
 
@@ -291,7 +291,7 @@ def handle_message_events(event, say):
         # If already evaluated, only re-evaluate if the edit introduces new cake keywords
         if key in evaluated_messages:
             text_lower = original_text.lower()
-            new_keywords = {k for k in Config.KEYWORDS if re.search(rf"{k}", text_lower, re.IGNORECASE)}
+            new_keywords = {k for k in Config.KEYWORDS if re.search(rf"\b{k}\b", text_lower, re.IGNORECASE)}
             if not new_keywords - evaluated_messages[key]:
                 return
 
@@ -309,7 +309,7 @@ if __name__ == "__main__":
 
     def print_assessment(text):
         print(f"\n--- Testing Message: '{text}' ---")
-        found_keywords = [k for k in Config.KEYWORDS if re.search(rf"{k}", text, re.IGNORECASE)]
+        found_keywords = [k for k in Config.KEYWORDS if re.search(rf"\b{k}\b", text, re.IGNORECASE)]
         
         if found_keywords:
             print(f"✅ Keywords found: {found_keywords}")
