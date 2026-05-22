@@ -300,6 +300,8 @@ def handle_message_events(event, say):
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
+    if request.headers.get("X-Slack-Retry-Num"):
+        return "", 200
     return handler.handle(request)
 
 # Start the Flask app or run in CLI mode
