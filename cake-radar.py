@@ -190,6 +190,57 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
         'completion_tokens': completion_tokens,
     }
 
+def judge_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
+    """Second-pass review of a classifier 'yes'. Can overturn to 'no'.
+
+    Defaults to 'uphold' on any error so a judge outage cannot silently kill alerts.
+    """
+    prompt_text = Config.JUDGE_USER_PROMPT_TEMPLATE.format(
+        message_text=message_text, classifier_reason=classifier_reason
+    )
+    if image_data_uris:
+        user_content = [{"type": "text", "text": prompt_text}]
+        for uri in image_data_uris:
+            user_content.append({"type": "image_url", "image_url": {"url": uri, "detail": "low"}})
+    else:
+        user_content = prompt_text
+
+    def _call(content):
+        return client.chat.completions.create(
+            model=Config.JUDGE_MODEL,
+            messages=[
+                {"role": "system", "content": Config.JUDGE_SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
+        )
+
+    try:
+        response = _call(user_content)
+    except Exception as e:
+        if image_data_uris:
+            logging.warning(f"Judge image error, retrying without images: {e}")
+            try:
+                response = _call(prompt_text)
+            except Exception as e2:
+                logging.error(f"Judge error, defaulting to uphold: {e2}")
+                return {'verdict': 'uphold', 'reason': 'judge_error'}
+        else:
+            logging.error(f"Judge error, defaulting to uphold: {e}")
+            return {'verdict': 'uphold', 'reason': 'judge_error'}
+
+    try:
+        raw = response.choices[0].message.content.strip().lower()
+        verdict, _, reason = raw.partition(',')
+        verdict = verdict.strip()
+        if verdict not in ('uphold', 'overturn'):
+            logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
+            return {'verdict': 'uphold', 'reason': f'parse_error: {raw[:80]}'}
+        return {'verdict': verdict, 'reason': reason.strip()}
+    except Exception as e:
+        logging.error(f"Error parsing judge response, defaulting to uphold: {e}")
+        return {'verdict': 'uphold', 'reason': 'parse_error'}
+
+
 def send_slack_alert(say, channel_id, ts, certainty, target_channel):
     """Helper to format and send the Slack alert."""
     message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
@@ -219,14 +270,24 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     total_certainty = result['total_certainty']
     reason = result.get('reason', '')
 
-    forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
+    classifier_forwarded = decision and "yes" in decision and total_certainty > Config.CERTAINTY_THRESHOLD
+
+    judge_verdict = None
+    judge_reason = None
+    if classifier_forwarded:
+        judge = judge_decision(original_text, reason, image_data_uris)
+        judge_verdict = judge['verdict']
+        judge_reason = judge['reason']
+
+    forwarded = classifier_forwarded and judge_verdict != 'overturn'
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
     label = "EVALUATED (edit)" if is_edit else "EVALUATED"
 
     flat_text = ' '.join(original_text.split())
     reason_part = f" | reason={reason}" if reason else ""
+    judge_part = f" | judge={judge_verdict} ({judge_reason})" if judge_verdict else ""
     logging.info(
-        f"{label} | {action} | AI={decision} {total_certainty}%{reason_part} | "
+        f"{label} | {action} | AI={decision} {total_certainty}%{reason_part}{judge_part} | "
         f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "
         f'{_user_name(user_id)} | "{flat_text}"'
     )
@@ -310,15 +371,32 @@ if __name__ == "__main__":
     def print_assessment(text):
         print(f"\n--- Testing Message: '{text}' ---")
         found_keywords = [k for k in Config.KEYWORDS if re.search(rf"\b{k}\b", text, re.IGNORECASE)]
-        
+
         if found_keywords:
             print(f"✅ Keywords found: {found_keywords}")
             print("🤔 Assessing certainty with AI...")
             result = assess_certainty(text)
-            
-            print(f"\n--- Assessment Result ---")
+
+            print(f"\n--- Classifier Result ---")
             print(f"Decision: {result['decision'].upper()}")
             print(f"Total Certainty: {result['total_certainty']}%")
+            print(f"Reason: {result.get('reason', '')}")
+
+            classifier_forwarded = (
+                result['decision'] and "yes" in result['decision']
+                and result['total_certainty'] > Config.CERTAINTY_THRESHOLD
+            )
+            if classifier_forwarded:
+                print("\n⚖️  Classifier said yes + above threshold — running judge...")
+                judge = judge_decision(text, result.get('reason', ''))
+                print(f"\n--- Judge Result ---")
+                print(f"Verdict: {judge['verdict'].upper()}")
+                print(f"Reason: {judge['reason']}")
+                final = classifier_forwarded and judge['verdict'] != 'overturn'
+                print(f"\n--- Final ---")
+                print(f"{'✅ FORWARD' if final else '🚫 SUPPRESS'}")
+            else:
+                print("\n(Classifier below threshold — judge not run.)")
         else:
             print("❌ No cake keywords found.")
 
