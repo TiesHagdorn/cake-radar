@@ -40,6 +40,7 @@ class TestDeduplication(unittest.TestCase):
         """Clear state before each test."""
         cake_radar.processed_messages.clear()
         cake_radar.evaluated_messages.clear()
+        cake_radar.app.client.chat_postMessage.reset_mock()
 
     def tearDown(self):
         """Clear state after each test."""
@@ -171,6 +172,20 @@ class TestDeduplication(unittest.TestCase):
         # Should NOT be processed
         self.assertEqual(mock_assess.call_count, 0)
 
+    def test_openai_auth_error_sends_operational_alert(self):
+        """OpenAI auth failures should alert in the test/support channel."""
+        error = Exception("Error code: 401 - {'error': {'code': 'invalid_api_key'}}")
+
+        cake_radar.notify_openai_operational_error(error, 'classifier')
+        cake_radar.notify_openai_operational_error(error, 'classifier')
+
+        self.assertEqual(cake_radar.app.client.chat_postMessage.call_count, 2)
+        for call in cake_radar.app.client.chat_postMessage.call_args_list:
+            kwargs = call.kwargs
+            self.assertEqual(kwargs['channel'], 'C07SBFP9GDR')
+            self.assertNotIn('thread_ts', kwargs)
+            self.assertIn('<!subteam^S0ACA5Y6W48>', kwargs['text'])
+            self.assertIn("I'm broken, please check the logs", kwargs['text'])
+
 if __name__ == '__main__':
     unittest.main()
-
