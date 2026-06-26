@@ -78,6 +78,46 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 
 _PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif', 'WEBP': 'image/webp'}
 
+def _openai_operational_error_kind(error: Exception) -> str:
+    """Return an alert-worthy OpenAI error kind, or an empty string."""
+    status_code = getattr(error, 'status_code', None)
+    response = getattr(error, 'response', None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, 'status_code', None)
+
+    error_text = str(error).lower()
+    if status_code in (401, 403) or 'invalid_api_key' in error_text or 'incorrect api key' in error_text:
+        return 'auth'
+    if 'insufficient_quota' in error_text or 'billing' in error_text:
+        return 'quota'
+    return ''
+
+def notify_openai_operational_error(error: Exception, context: str):
+    """Post a Slack alert for OpenAI configuration problems."""
+    kind = _openai_operational_error_kind(error)
+    if not kind:
+        return
+
+    if kind == 'auth':
+        detail = "OpenAI authentication failed."
+    else:
+        detail = "OpenAI quota or billing failed."
+
+    target_channel = Config.OPERATIONAL_ALERT_CHANNEL
+    if not target_channel:
+        logging.error("OpenAI operational alert suppressed: no OPERATIONAL_ALERT_CHANNEL configured")
+        return
+
+    text = (
+        f"Hi {Config.OPERATIONAL_ALERT_SUPPORT_MENTION}, I'm broken, please check the logs!\n"
+        f"{detail} Treat alerts may be missed until this is fixed. Context: `{context}`."
+    )
+
+    try:
+        app.client.chat_postMessage(channel=target_channel, text=text)
+    except Exception as slack_error:
+        logging.error(f"Failed to send operational alert: {slack_error}")
+
 def download_slack_images(files: list, max_images: int = 1) -> List[str]:
     """Download image attachments from a Slack message and return as base64 data URIs."""
     data_uris = []
@@ -156,13 +196,30 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
     try:
         response = _call_openai(user_content)
     except Exception as e:
+        notify_openai_operational_error(e, 'classifier')
+        if _openai_operational_error_kind(e):
+            logging.error(f"OpenAI classifier operational error: {e}")
+            return {
+                'decision': 'error',
+                'total_certainty': 0,
+                'reason': _openai_operational_error_kind(e),
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+            }
         if image_data_uris:
             logging.warning(f"OpenAI image error, retrying without images: {e}")
             try:
                 response = _call_openai(prompt_text)
             except Exception as e2:
+                notify_openai_operational_error(e2, 'classifier_retry_without_images')
                 logging.error(f"Error assessing certainty: {e2}")
-                return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
+                return {
+                    'decision': 'error' if _openai_operational_error_kind(e2) else 'no',
+                    'total_certainty': 0,
+                    'reason': _openai_operational_error_kind(e2),
+                    'prompt_tokens': 0,
+                    'completion_tokens': 0,
+                }
         else:
             logging.error(f"Error assessing certainty: {e}")
             return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
@@ -217,11 +274,13 @@ def judge_decision(message_text: str, classifier_reason: str, image_data_uris: L
     try:
         response = _call(user_content)
     except Exception as e:
+        notify_openai_operational_error(e, 'judge')
         if image_data_uris:
             logging.warning(f"Judge image error, retrying without images: {e}")
             try:
                 response = _call(prompt_text)
             except Exception as e2:
+                notify_openai_operational_error(e2, 'judge_retry_without_images')
                 logging.error(f"Judge error, defaulting to uphold: {e2}")
                 return {'verdict': 'uphold', 'reason': 'judge_error'}
         else:
