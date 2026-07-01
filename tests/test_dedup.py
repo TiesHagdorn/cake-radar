@@ -9,13 +9,28 @@ os.environ['SLACK_TOKEN_VERIFICATION_ENABLED'] = 'false'
 
 from cake_radar import app as cake_radar
 
+def _decorator(*args, **kwargs):
+    def wrapper(func):
+        return func
+    return wrapper
+
+def _fake_slack_app():
+    slack_app = MagicMock()
+    slack_app.message.side_effect = _decorator
+    slack_app.event.side_effect = _decorator
+    return slack_app
+
 class TestDeduplication(unittest.TestCase):
 
     def setUp(self):
         """Clear state before each test."""
         cake_radar.processed_messages.clear()
         cake_radar.evaluated_messages.clear()
-        cake_radar.app._client = MagicMock()
+        cake_radar.initialize(
+            slack_app=_fake_slack_app(),
+            openai_client=MagicMock(),
+            validate_config=False,
+        )
         cake_radar.Config.OPERATIONAL_ALERT_CHANNEL = 'COPS'
         cake_radar.Config.OPERATIONAL_ALERT_SUPPORT_MENTION = '@support'
         cake_radar.app.client.chat_postMessage.reset_mock()

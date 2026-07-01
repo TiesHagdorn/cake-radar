@@ -9,22 +9,11 @@ import io
 import requests
 from PIL import Image
 from pillow_heif import register_heif_opener
-register_heif_opener()
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Dict, List
 from collections import deque
 from .config import Config
-
-# Configure logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(levelname)-7s %(message)s',
-                    handlers=[logging.StreamHandler()])
-
-# Initialize Config
-if not Config.validate():
-    exit(1)
-Config.load_keywords()
 
 # Track processed messages to handle Slack retries
 processed_messages = deque(maxlen=1000)
@@ -38,7 +27,8 @@ _channel_name_cache: Dict[str, str] = {}
 def _channel_name(channel_id: str) -> str:
     if channel_id not in _channel_name_cache:
         try:
-            result = app.client.conversations_info(channel=channel_id)
+            slack_app, _, _ = ensure_initialized()
+            result = slack_app.client.conversations_info(channel=channel_id)
             _channel_name_cache[channel_id] = '#' + result['channel']['name']
         except Exception:
             _channel_name_cache[channel_id] = channel_id
@@ -49,7 +39,8 @@ _user_name_cache: Dict[str, str] = {}
 def _user_name(user_id: str) -> str:
     if user_id not in _user_name_cache:
         try:
-            result = app.client.users_info(user=user_id)
+            slack_app, _, _ = ensure_initialized()
+            result = slack_app.client.users_info(user=user_id)
             profile = result['user']['profile']
             name = profile.get('display_name') or profile.get('real_name') or user_id
             _user_name_cache[user_id] = '@' + name
@@ -63,22 +54,56 @@ def _fmt_ts(ts: str) -> str:
     except Exception:
         return ts
 
-# Initialize the Slack app and Flask app
-app = App(
-    token=Config.SLACK_BOT_TOKEN,
-    signing_secret=Config.SLACK_SIGNING_SECRET,
-    token_verification_enabled=Config.SLACK_TOKEN_VERIFICATION_ENABLED,
-)
-client = OpenAI(api_key=Config.OPENAI_API_KEY)
 flask_app = Flask(__name__)
 flask_app.logger.disabled = True
-handler = SlackRequestHandler(app)
+app = None
+client = None
+handler = None
+_heif_registered = False
 
-# Suppress noisy third-party loggers
-logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
-logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
-logging.getLogger('gunicorn.error').setLevel(logging.WARNING)
-logging.getLogger('httpx').setLevel(logging.WARNING)
+def configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)-7s %(message)s',
+        handlers=[logging.StreamHandler()],
+    )
+    logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
+    logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
+    logging.getLogger('gunicorn.error').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+
+def _ensure_heif_registered():
+    global _heif_registered
+    if not _heif_registered:
+        register_heif_opener()
+        _heif_registered = True
+
+def initialize(slack_app=None, openai_client=None, validate_config=True):
+    """Initialize external clients and register Slack handlers."""
+    global app, client, handler
+
+    if validate_config and not Config.validate():
+        raise RuntimeError("One or more environment variables are missing")
+
+    Config.load_keywords()
+    app = slack_app or App(
+        token=Config.SLACK_BOT_TOKEN,
+        signing_secret=Config.SLACK_SIGNING_SECRET,
+        token_verification_enabled=Config.SLACK_TOKEN_VERIFICATION_ENABLED,
+    )
+    client = openai_client or OpenAI(api_key=Config.OPENAI_API_KEY)
+    handler = SlackRequestHandler(app)
+    register_handlers(app)
+    return flask_app
+
+def ensure_initialized():
+    if app is None or client is None or handler is None:
+        initialize()
+    return app, client, handler
+
+def register_handlers(slack_app):
+    slack_app.message()(handle_message)
+    slack_app.event("message")(handle_message_events)
 
 _PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif', 'WEBP': 'image/webp'}
 
@@ -127,7 +152,8 @@ def notify_openai_operational_error(error: Exception, context: str):
     )
 
     try:
-        app.client.chat_postMessage(channel=target_channel, text=text)
+        slack_app, _, _ = ensure_initialized()
+        slack_app.client.chat_postMessage(channel=target_channel, text=text)
     except Exception as slack_error:
         logging.error(f"Failed to send operational alert: {slack_error}")
 
@@ -161,6 +187,7 @@ def download_slack_images(files: list, max_images: int = 1) -> List[str]:
                 logging.warning(f"Slack returned {content_type!r} (len={len(response.content)}) instead of image, skipping")
                 continue
             try:
+                _ensure_heif_registered()
                 img = Image.open(io.BytesIO(response.content))
                 out_mimetype = _PILLOW_TO_OPENAI.get(img.format, 'image/jpeg')
                 out_format = img.format if img.format in _PILLOW_TO_OPENAI else 'JPEG'
@@ -198,7 +225,8 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
         user_content = prompt_text
 
     def _call_openai(content):
-        return client.chat.completions.create(
+        _, openai_client, _ = ensure_initialized()
+        return openai_client.chat.completions.create(
             model=Config.OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": Config.SYSTEM_PROMPT},
@@ -273,7 +301,8 @@ def _run_judge(judge_config: Dict, prompt_text: str, user_content) -> Dict:
     judge_name = judge_config['name']
 
     def _call(content):
-        return client.chat.completions.create(
+        _, openai_client, _ = ensure_initialized()
+        return openai_client.chat.completions.create(
             model=Config.JUDGE_MODEL,
             messages=[
                 {"role": "system", "content": judge_config['prompt']},
@@ -403,8 +432,6 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
         send_slack_alert(say, channel_id, ts, total_certainty, Config.ALERT_CHANNEL)
 
 
-# Listen for new messages
-@app.message()
 def handle_message(message, say):
     original_text = message.get('text', '')
     channel_id = message['channel']
@@ -428,8 +455,6 @@ def handle_message(message, say):
     evaluate_message(original_text, channel_id, ts, message.get('files', []), say, user_id=user_id)
 
 
-# Listen for edited messages
-@app.event("message")
 def handle_message_events(event, say):
     subtype = event.get('subtype')
 
@@ -468,12 +493,25 @@ def handle_message_events(event, say):
 def slack_events():
     if request.headers.get("X-Slack-Retry-Num"):
         return "", 200
-    return handler.handle(request)
+    _, _, slack_handler = ensure_initialized()
+    return slack_handler.handle(request)
 
 # Start the Flask app or run in CLI mode
 def main():
     import argparse
     import sys
+
+    configure_logging()
+    parser = argparse.ArgumentParser(description="Cake Radar Bot")
+    parser.add_argument("--test", type=str, help="Test a single message string")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
+    args = parser.parse_args()
+
+    try:
+        initialize()
+    except RuntimeError as exc:
+        logging.error(str(exc))
+        sys.exit(1)
 
     def print_assessment(text):
         print(f"\n--- Testing Message: '{text}' ---")
@@ -506,11 +544,6 @@ def main():
                 print("\n(Classifier below threshold — judge not run.)")
         else:
             print("❌ No cake keywords found.")
-
-    parser = argparse.ArgumentParser(description="Cake Radar Bot")
-    parser.add_argument("--test", type=str, help="Test a single message string")
-    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
-    args = parser.parse_args()
 
     if args.test:
         print_assessment(args.test)
