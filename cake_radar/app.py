@@ -3,17 +3,14 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from flask import Flask, request
 from openai import OpenAI
 import logging
-import re
-import base64
-import io
-import requests
-from PIL import Image
-from pillow_heif import register_heif_opener
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Dict, List
 from collections import deque
+from . import classifier
 from .config import Config
+from .images import download_slack_images as _download_slack_images
+from .matching import match_keywords
 
 # Track processed messages to handle Slack retries
 processed_messages = deque(maxlen=1000)
@@ -59,7 +56,6 @@ flask_app.logger.disabled = True
 app = None
 client = None
 handler = None
-_heif_registered = False
 
 def configure_logging():
     logging.basicConfig(
@@ -71,12 +67,6 @@ def configure_logging():
     logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
     logging.getLogger('gunicorn.error').setLevel(logging.WARNING)
     logging.getLogger('httpx').setLevel(logging.WARNING)
-
-def _ensure_heif_registered():
-    global _heif_registered
-    if not _heif_registered:
-        register_heif_opener()
-        _heif_registered = True
 
 def initialize(slack_app=None, openai_client=None, validate_config=True):
     """Initialize external clients and register Slack handlers."""
@@ -105,30 +95,8 @@ def register_handlers(slack_app):
     slack_app.message()(handle_message)
     slack_app.event("message")(handle_message_events)
 
-_PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif', 'WEBP': 'image/webp'}
-
-def match_keywords(text: str) -> List[str]:
-    """Return configured keywords that appear as standalone terms."""
-    text = text.lower()
-    return [
-        keyword
-        for keyword in Config.KEYWORDS
-        if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE)
-    ]
-
 def _openai_operational_error_kind(error: Exception) -> str:
-    """Return an alert-worthy OpenAI error kind, or an empty string."""
-    status_code = getattr(error, 'status_code', None)
-    response = getattr(error, 'response', None)
-    if status_code is None and response is not None:
-        status_code = getattr(response, 'status_code', None)
-
-    error_text = str(error).lower()
-    if status_code in (401, 403) or 'invalid_api_key' in error_text or 'incorrect api key' in error_text:
-        return 'auth'
-    if 'insufficient_quota' in error_text or 'billing' in error_text:
-        return 'quota'
-    return ''
+    return classifier.openai_operational_error_kind(error)
 
 def notify_openai_operational_error(error: Exception, context: str):
     """Post a Slack alert for OpenAI configuration problems."""
@@ -158,213 +126,33 @@ def notify_openai_operational_error(error: Exception, context: str):
         logging.error(f"Failed to send operational alert: {slack_error}")
 
 def download_slack_images(files: list, max_images: int = 1) -> List[str]:
-    """Download image attachments from a Slack message and return as base64 data URIs."""
-    data_uris = []
-    for f in files:
-        if len(data_uris) >= max_images:
-            break
-        mimetype = f.get('mimetype', '')
-        url = f.get('url_private_download') or f.get('url_private')
-        if not mimetype.startswith('image/') or not url:
-            continue
-        try:
-            headers = {'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}
-            response = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
-            logging.debug(f"Image fetch status={response.status_code} url={url[:80]}")
-            if response.is_redirect or response.is_permanent_redirect:
-                redirect_url = response.headers.get('Location')
-                if redirect_url:
-                    logging.debug(f"Image redirect -> {redirect_url[:80]}")
-                    response = requests.get(redirect_url, timeout=10)
-            response.raise_for_status()
-            content_type = response.headers.get('Content-Type', '')
-            if not content_type.startswith('image/'):
-                logging.debug(f"Auth'd request returned HTML, retrying without auth: {response.content[:200]!r}")
-                response = requests.get(url, timeout=10, allow_redirects=True)
-                response.raise_for_status()
-                content_type = response.headers.get('Content-Type', '')
-            if not content_type.startswith('image/'):
-                logging.warning(f"Slack returned {content_type!r} (len={len(response.content)}) instead of image, skipping")
-                continue
-            try:
-                _ensure_heif_registered()
-                img = Image.open(io.BytesIO(response.content))
-                out_mimetype = _PILLOW_TO_OPENAI.get(img.format, 'image/jpeg')
-                out_format = img.format if img.format in _PILLOW_TO_OPENAI else 'JPEG'
-                if out_format == 'JPEG':
-                    img = img.convert('RGB')
-                buf = io.BytesIO()
-                img.save(buf, out_format)
-                encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
-                data_uris.append(f"data:{out_mimetype};base64,{encoded}")
-            except Exception as conv_err:
-                logging.warning(f"Could not process {mimetype} image (Content-Type={content_type!r}, len={len(response.content)}), skipping: {conv_err}")
-        except Exception as e:
-            logging.error(f"Failed to download Slack image: {e}")
-    return data_uris
+    return _download_slack_images(files, Config.SLACK_BOT_TOKEN, max_images)
 
 # Function to assess certainty
 def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Dict:
-    """Assess the likelihood of the message being about offering something.
-
-    Returns a dict with:
-    - decision: 'yes' or 'no'
-    - total_certainty: combined certainty score
-    - prompt_tokens: number of input tokens used
-    - completion_tokens: number of output tokens used
-    """
-    decision = "no"
-    total_certainty = 0
-    prompt_text = Config.USER_PROMPT_TEMPLATE.format(message_text=message_text)
-
-    if image_data_uris:
-        user_content = [{"type": "text", "text": prompt_text}]
-        for uri in image_data_uris:
-            user_content.append({"type": "image_url", "image_url": {"url": uri, "detail": "low"}})
-    else:
-        user_content = prompt_text
-
-    def _call_openai(content):
-        _, openai_client, _ = ensure_initialized()
-        return openai_client.chat.completions.create(
-            model=Config.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": Config.SYSTEM_PROMPT},
-                {"role": "user", "content": content}
-            ]
-        )
-
-    try:
-        response = _call_openai(user_content)
-    except Exception as e:
-        notify_openai_operational_error(e, 'classifier')
-        if _openai_operational_error_kind(e):
-            logging.error(f"OpenAI classifier operational error: {e}")
-            return {
-                'decision': 'error',
-                'total_certainty': 0,
-                'reason': _openai_operational_error_kind(e),
-                'prompt_tokens': 0,
-                'completion_tokens': 0,
-            }
-        if image_data_uris:
-            logging.warning(f"OpenAI image error, retrying without images: {e}")
-            try:
-                response = _call_openai(prompt_text)
-            except Exception as e2:
-                notify_openai_operational_error(e2, 'classifier_retry_without_images')
-                logging.error(f"Error assessing certainty: {e2}")
-                return {
-                    'decision': 'error' if _openai_operational_error_kind(e2) else 'no',
-                    'total_certainty': 0,
-                    'reason': _openai_operational_error_kind(e2),
-                    'prompt_tokens': 0,
-                    'completion_tokens': 0,
-                }
-        else:
-            logging.error(f"Error assessing certainty: {e}")
-            return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
-
-    reason = ''
-    try:
-        assessment = response.choices[0].message.content.strip().lower()
-        parts = [p.strip() for p in assessment.split(',')]
-        decision = parts[0]
-        if len(parts) >= 2:
-            total_certainty = int(parts[1].replace('%', ''))
-        if len(parts) >= 3:
-            reason = ', '.join(parts[2:])
-        prompt_tokens = response.usage.prompt_tokens
-        completion_tokens = response.usage.completion_tokens
-    except Exception as e:
-        logging.error(f"Error parsing OpenAI response: {e}")
-        return {'decision': 'no', 'total_certainty': 0, 'reason': '', 'prompt_tokens': 0, 'completion_tokens': 0}
-
-    return {
-        'decision': decision,
-        'total_certainty': total_certainty,
-        'reason': reason,
-        'prompt_tokens': prompt_tokens,
-        'completion_tokens': completion_tokens,
-    }
+    _, openai_client, _ = ensure_initialized()
+    return classifier.assess_certainty(
+        openai_client,
+        message_text,
+        notify_openai_operational_error,
+        image_data_uris,
+    )
 
 def _parse_judge_response(raw_response: str) -> Dict:
-    raw = raw_response.strip().lower()
-    verdict, _, reason = raw.partition(',')
-    verdict = verdict.strip()
-    if verdict not in ('uphold', 'overturn'):
-        logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
-        return {'verdict': 'uphold', 'reason': f'parse_error: {raw[:80]}'}
-    return {'verdict': verdict, 'reason': reason.strip()}
-
-def _run_judge(judge_config: Dict, prompt_text: str, user_content) -> Dict:
-    judge_name = judge_config['name']
-
-    def _call(content):
-        _, openai_client, _ = ensure_initialized()
-        return openai_client.chat.completions.create(
-            model=Config.JUDGE_MODEL,
-            messages=[
-                {"role": "system", "content": judge_config['prompt']},
-                {"role": "user", "content": content},
-            ],
-        )
-
-    try:
-        response = _call(user_content)
-    except Exception as e:
-        notify_openai_operational_error(e, f'judge_{judge_name}')
-        if user_content != prompt_text:
-            logging.warning(f"Judge {judge_name} image error, retrying without images: {e}")
-            try:
-                response = _call(prompt_text)
-            except Exception as e2:
-                notify_openai_operational_error(e2, f'judge_{judge_name}_retry_without_images')
-                logging.error(f"Judge {judge_name} error, defaulting to uphold: {e2}")
-                return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
-        else:
-            logging.error(f"Judge {judge_name} error, defaulting to uphold: {e}")
-            return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
-
-    try:
-        result = _parse_judge_response(response.choices[0].message.content)
-        return {'name': judge_name, **result}
-    except Exception as e:
-        logging.error(f"Error parsing judge {judge_name} response, defaulting to uphold: {e}")
-        return {'name': judge_name, 'verdict': 'uphold', 'reason': 'parse_error'}
+    return classifier.parse_judge_response(raw_response)
 
 def judge_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
-    """Run a small judge panel over a classifier 'yes'.
-
-    A 2-of-3 overturn majority is required to suppress. Each judge defaults to
-    uphold on error so judge outages cannot silently kill alerts.
-    """
-    prompt_text = Config.JUDGE_USER_PROMPT_TEMPLATE.format(
-        message_text=message_text, classifier_reason=classifier_reason
+    _, openai_client, _ = ensure_initialized()
+    return classifier.judge_decision(
+        openai_client,
+        message_text,
+        classifier_reason,
+        notify_openai_operational_error,
+        image_data_uris,
     )
-    if image_data_uris:
-        user_content = [{"type": "text", "text": prompt_text}]
-        for uri in image_data_uris:
-            user_content.append({"type": "image_url", "image_url": {"url": uri, "detail": "low"}})
-    else:
-        user_content = prompt_text
-
-    votes = [
-        _run_judge(judge_config, prompt_text, user_content)
-        for judge_config in Config.JUDGE_SYSTEM_PROMPTS
-    ]
-    overturns = sum(1 for vote in votes if vote['verdict'] == 'overturn')
-    verdict = 'overturn' if overturns >= 2 else 'uphold'
-    reason = '; '.join(
-        f"{vote['name']}={vote['verdict']}:{vote['reason']}" for vote in votes
-    )
-    return {'verdict': verdict, 'reason': reason, 'votes': votes}
 
 def _format_judge_votes(votes: List[Dict]) -> str:
-    return '; '.join(
-        f"{vote.get('name', 'unknown')}={vote.get('verdict', 'unknown')} ({vote.get('reason', '')})"
-        for vote in votes
-    )
+    return classifier.format_judge_votes(votes)
 
 
 def send_slack_alert(say, channel_id, ts, certainty, target_channel):
