@@ -1,0 +1,539 @@
+from slack_bolt import App
+from slack_bolt.adapter.flask import SlackRequestHandler
+from flask import Flask, request
+from openai import OpenAI
+import logging
+import re
+import base64
+import io
+import requests
+from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener()
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import Dict, List
+from collections import deque
+from .config import Config
+
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(levelname)-7s %(message)s',
+                    handlers=[logging.StreamHandler()])
+
+# Initialize Config
+if not Config.validate():
+    exit(1)
+Config.load_keywords()
+
+# Track processed messages to handle Slack retries
+processed_messages = deque(maxlen=1000)
+
+# Track evaluated messages: (channel_id, ts) -> set of matched keywords (used to suppress duplicate edit logs)
+evaluated_messages = {}
+
+# Channel name cache: id -> "#name"
+_channel_name_cache: Dict[str, str] = {}
+
+def _channel_name(channel_id: str) -> str:
+    if channel_id not in _channel_name_cache:
+        try:
+            result = app.client.conversations_info(channel=channel_id)
+            _channel_name_cache[channel_id] = '#' + result['channel']['name']
+        except Exception:
+            _channel_name_cache[channel_id] = channel_id
+    return _channel_name_cache[channel_id]
+
+_user_name_cache: Dict[str, str] = {}
+
+def _user_name(user_id: str) -> str:
+    if user_id not in _user_name_cache:
+        try:
+            result = app.client.users_info(user=user_id)
+            profile = result['user']['profile']
+            name = profile.get('display_name') or profile.get('real_name') or user_id
+            _user_name_cache[user_id] = '@' + name
+        except Exception:
+            _user_name_cache[user_id] = '@' + user_id
+    return _user_name_cache[user_id]
+
+def _fmt_ts(ts: str) -> str:
+    try:
+        return datetime.fromtimestamp(float(ts), tz=ZoneInfo("Europe/Amsterdam")).strftime("%H:%M")
+    except Exception:
+        return ts
+
+# Initialize the Slack app and Flask app
+app = App(
+    token=Config.SLACK_BOT_TOKEN,
+    signing_secret=Config.SLACK_SIGNING_SECRET,
+    token_verification_enabled=Config.SLACK_TOKEN_VERIFICATION_ENABLED,
+)
+client = OpenAI(api_key=Config.OPENAI_API_KEY)
+flask_app = Flask(__name__)
+flask_app.logger.disabled = True
+handler = SlackRequestHandler(app)
+
+# Suppress noisy third-party loggers
+logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
+logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
+logging.getLogger('gunicorn.error').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
+_PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif', 'WEBP': 'image/webp'}
+
+def match_keywords(text: str) -> List[str]:
+    """Return configured keywords that appear as standalone terms."""
+    text = text.lower()
+    return [
+        keyword
+        for keyword in Config.KEYWORDS
+        if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE)
+    ]
+
+def _openai_operational_error_kind(error: Exception) -> str:
+    """Return an alert-worthy OpenAI error kind, or an empty string."""
+    status_code = getattr(error, 'status_code', None)
+    response = getattr(error, 'response', None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, 'status_code', None)
+
+    error_text = str(error).lower()
+    if status_code in (401, 403) or 'invalid_api_key' in error_text or 'incorrect api key' in error_text:
+        return 'auth'
+    if 'insufficient_quota' in error_text or 'billing' in error_text:
+        return 'quota'
+    return ''
+
+def notify_openai_operational_error(error: Exception, context: str):
+    """Post a Slack alert for OpenAI configuration problems."""
+    kind = _openai_operational_error_kind(error)
+    if not kind:
+        return
+
+    if kind == 'auth':
+        detail = "OpenAI authentication failed."
+    else:
+        detail = "OpenAI quota or billing failed."
+
+    target_channel = Config.OPERATIONAL_ALERT_CHANNEL
+    if not target_channel:
+        logging.error("OpenAI operational alert suppressed: no OPERATIONAL_ALERT_CHANNEL configured")
+        return
+
+    text = (
+        f"Hi {Config.OPERATIONAL_ALERT_SUPPORT_MENTION}, I'm broken, please check the logs!\n"
+        f"{detail} Treat alerts may be missed until this is fixed. Context: `{context}`."
+    )
+
+    try:
+        app.client.chat_postMessage(channel=target_channel, text=text)
+    except Exception as slack_error:
+        logging.error(f"Failed to send operational alert: {slack_error}")
+
+def download_slack_images(files: list, max_images: int = 1) -> List[str]:
+    """Download image attachments from a Slack message and return as base64 data URIs."""
+    data_uris = []
+    for f in files:
+        if len(data_uris) >= max_images:
+            break
+        mimetype = f.get('mimetype', '')
+        url = f.get('url_private_download') or f.get('url_private')
+        if not mimetype.startswith('image/') or not url:
+            continue
+        try:
+            headers = {'Authorization': f'Bearer {Config.SLACK_BOT_TOKEN}'}
+            response = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
+            logging.debug(f"Image fetch status={response.status_code} url={url[:80]}")
+            if response.is_redirect or response.is_permanent_redirect:
+                redirect_url = response.headers.get('Location')
+                if redirect_url:
+                    logging.debug(f"Image redirect -> {redirect_url[:80]}")
+                    response = requests.get(redirect_url, timeout=10)
+            response.raise_for_status()
+            content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                logging.debug(f"Auth'd request returned HTML, retrying without auth: {response.content[:200]!r}")
+                response = requests.get(url, timeout=10, allow_redirects=True)
+                response.raise_for_status()
+                content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                logging.warning(f"Slack returned {content_type!r} (len={len(response.content)}) instead of image, skipping")
+                continue
+            try:
+                img = Image.open(io.BytesIO(response.content))
+                out_mimetype = _PILLOW_TO_OPENAI.get(img.format, 'image/jpeg')
+                out_format = img.format if img.format in _PILLOW_TO_OPENAI else 'JPEG'
+                if out_format == 'JPEG':
+                    img = img.convert('RGB')
+                buf = io.BytesIO()
+                img.save(buf, out_format)
+                encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
+                data_uris.append(f"data:{out_mimetype};base64,{encoded}")
+            except Exception as conv_err:
+                logging.warning(f"Could not process {mimetype} image (Content-Type={content_type!r}, len={len(response.content)}), skipping: {conv_err}")
+        except Exception as e:
+            logging.error(f"Failed to download Slack image: {e}")
+    return data_uris
+
+# Function to assess certainty
+def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Dict:
+    """Assess the likelihood of the message being about offering something.
+
+    Returns a dict with:
+    - decision: 'yes' or 'no'
+    - total_certainty: combined certainty score
+    - prompt_tokens: number of input tokens used
+    - completion_tokens: number of output tokens used
+    """
+    decision = "no"
+    total_certainty = 0
+    prompt_text = Config.USER_PROMPT_TEMPLATE.format(message_text=message_text)
+
+    if image_data_uris:
+        user_content = [{"type": "text", "text": prompt_text}]
+        for uri in image_data_uris:
+            user_content.append({"type": "image_url", "image_url": {"url": uri, "detail": "low"}})
+    else:
+        user_content = prompt_text
+
+    def _call_openai(content):
+        return client.chat.completions.create(
+            model=Config.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": Config.SYSTEM_PROMPT},
+                {"role": "user", "content": content}
+            ]
+        )
+
+    try:
+        response = _call_openai(user_content)
+    except Exception as e:
+        notify_openai_operational_error(e, 'classifier')
+        if _openai_operational_error_kind(e):
+            logging.error(f"OpenAI classifier operational error: {e}")
+            return {
+                'decision': 'error',
+                'total_certainty': 0,
+                'reason': _openai_operational_error_kind(e),
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+            }
+        if image_data_uris:
+            logging.warning(f"OpenAI image error, retrying without images: {e}")
+            try:
+                response = _call_openai(prompt_text)
+            except Exception as e2:
+                notify_openai_operational_error(e2, 'classifier_retry_without_images')
+                logging.error(f"Error assessing certainty: {e2}")
+                return {
+                    'decision': 'error' if _openai_operational_error_kind(e2) else 'no',
+                    'total_certainty': 0,
+                    'reason': _openai_operational_error_kind(e2),
+                    'prompt_tokens': 0,
+                    'completion_tokens': 0,
+                }
+        else:
+            logging.error(f"Error assessing certainty: {e}")
+            return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
+
+    reason = ''
+    try:
+        assessment = response.choices[0].message.content.strip().lower()
+        parts = [p.strip() for p in assessment.split(',')]
+        decision = parts[0]
+        if len(parts) >= 2:
+            total_certainty = int(parts[1].replace('%', ''))
+        if len(parts) >= 3:
+            reason = ', '.join(parts[2:])
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+    except Exception as e:
+        logging.error(f"Error parsing OpenAI response: {e}")
+        return {'decision': 'no', 'total_certainty': 0, 'reason': '', 'prompt_tokens': 0, 'completion_tokens': 0}
+
+    return {
+        'decision': decision,
+        'total_certainty': total_certainty,
+        'reason': reason,
+        'prompt_tokens': prompt_tokens,
+        'completion_tokens': completion_tokens,
+    }
+
+def _parse_judge_response(raw_response: str) -> Dict:
+    raw = raw_response.strip().lower()
+    verdict, _, reason = raw.partition(',')
+    verdict = verdict.strip()
+    if verdict not in ('uphold', 'overturn'):
+        logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
+        return {'verdict': 'uphold', 'reason': f'parse_error: {raw[:80]}'}
+    return {'verdict': verdict, 'reason': reason.strip()}
+
+def _run_judge(judge_config: Dict, prompt_text: str, user_content) -> Dict:
+    judge_name = judge_config['name']
+
+    def _call(content):
+        return client.chat.completions.create(
+            model=Config.JUDGE_MODEL,
+            messages=[
+                {"role": "system", "content": judge_config['prompt']},
+                {"role": "user", "content": content},
+            ],
+        )
+
+    try:
+        response = _call(user_content)
+    except Exception as e:
+        notify_openai_operational_error(e, f'judge_{judge_name}')
+        if user_content != prompt_text:
+            logging.warning(f"Judge {judge_name} image error, retrying without images: {e}")
+            try:
+                response = _call(prompt_text)
+            except Exception as e2:
+                notify_openai_operational_error(e2, f'judge_{judge_name}_retry_without_images')
+                logging.error(f"Judge {judge_name} error, defaulting to uphold: {e2}")
+                return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
+        else:
+            logging.error(f"Judge {judge_name} error, defaulting to uphold: {e}")
+            return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
+
+    try:
+        result = _parse_judge_response(response.choices[0].message.content)
+        return {'name': judge_name, **result}
+    except Exception as e:
+        logging.error(f"Error parsing judge {judge_name} response, defaulting to uphold: {e}")
+        return {'name': judge_name, 'verdict': 'uphold', 'reason': 'parse_error'}
+
+def judge_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
+    """Run a small judge panel over a classifier 'yes'.
+
+    A 2-of-3 overturn majority is required to suppress. Each judge defaults to
+    uphold on error so judge outages cannot silently kill alerts.
+    """
+    prompt_text = Config.JUDGE_USER_PROMPT_TEMPLATE.format(
+        message_text=message_text, classifier_reason=classifier_reason
+    )
+    if image_data_uris:
+        user_content = [{"type": "text", "text": prompt_text}]
+        for uri in image_data_uris:
+            user_content.append({"type": "image_url", "image_url": {"url": uri, "detail": "low"}})
+    else:
+        user_content = prompt_text
+
+    votes = [
+        _run_judge(judge_config, prompt_text, user_content)
+        for judge_config in Config.JUDGE_SYSTEM_PROMPTS
+    ]
+    overturns = sum(1 for vote in votes if vote['verdict'] == 'overturn')
+    verdict = 'overturn' if overturns >= 2 else 'uphold'
+    reason = '; '.join(
+        f"{vote['name']}={vote['verdict']}:{vote['reason']}" for vote in votes
+    )
+    return {'verdict': verdict, 'reason': reason, 'votes': votes}
+
+def _format_judge_votes(votes: List[Dict]) -> str:
+    return '; '.join(
+        f"{vote.get('name', 'unknown')}={vote.get('verdict', 'unknown')} ({vote.get('reason', '')})"
+        for vote in votes
+    )
+
+
+def send_slack_alert(say, channel_id, ts, certainty, target_channel):
+    """Helper to format and send the Slack alert."""
+    message_url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
+    certainty_info = f"{certainty}% certainty"
+
+    icon = ":cake-radar:"
+    title = "Cake detected!"
+    full_message = f"{icon} *<{message_url}|{title}>* ({certainty_info})"
+    
+    try:
+        say(channel=target_channel, text=full_message)
+    except Exception as e:
+        logging.error(f"Error sending message to {target_channel}: {e}")
+
+def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, say, user_id: str = '', is_edit: bool = False):
+    """Run keyword matching, AI evaluation, logging, and forwarding for a message."""
+    text = original_text.lower()
+
+    matched_keywords = match_keywords(text)
+    if not matched_keywords:
+        return
+
+    image_data_uris = download_slack_images(files)
+    result = assess_certainty(text, image_data_uris)
+
+    decision = result['decision']
+    total_certainty = result['total_certainty']
+    reason = result.get('reason', '')
+
+    classifier_forwarded = decision == "yes" and total_certainty > Config.CERTAINTY_THRESHOLD
+
+    judge_verdict = None
+    judge_reason = None
+    judge_votes = []
+    if classifier_forwarded:
+        judge = judge_decision(original_text, reason, image_data_uris)
+        judge_verdict = judge['verdict']
+        judge_reason = judge['reason']
+        judge_votes = judge.get('votes', [])
+
+    forwarded = classifier_forwarded and judge_verdict != 'overturn'
+    action = "FORWARDED" if forwarded else "NOT_FORWARDED"
+    label = "EVALUATED (edit)" if is_edit else "EVALUATED"
+
+    flat_text = ' '.join(original_text.split())
+    reason_part = f" | reason={reason}" if reason else ""
+    judge_part = ""
+    if judge_verdict:
+        judge_part = f" | judge_panel={judge_verdict}"
+        if judge_votes:
+            judge_part += f" | judge_votes=[{_format_judge_votes(judge_votes)}]"
+        elif judge_reason:
+            judge_part += f" | judge_reason={judge_reason}"
+    logging.info(
+        f"{label} | {action} | AI={decision} {total_certainty}%{reason_part}{judge_part} | "
+        f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "
+        f'{_user_name(user_id)} | "{flat_text}"'
+    )
+
+    evaluated_messages[(channel_id, ts)] = set(matched_keywords)
+
+    if forwarded:
+        send_slack_alert(say, channel_id, ts, total_certainty, Config.ALERT_CHANNEL)
+
+
+# Listen for new messages
+@app.message()
+def handle_message(message, say):
+    original_text = message.get('text', '')
+    channel_id = message['channel']
+    ts = message['ts']
+    thread_ts = message.get('thread_ts')
+    user_id = message.get('user', '')
+
+    # Deduplicate messages to prevent handling retries
+    if (channel_id, ts) in processed_messages:
+        return
+    processed_messages.append((channel_id, ts))
+
+    # Exclude thread replies
+    if thread_ts and thread_ts != ts:
+        return
+
+    # Exclude messages from #cake-radar itself
+    if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
+        return
+
+    evaluate_message(original_text, channel_id, ts, message.get('files', []), say, user_id=user_id)
+
+
+# Listen for edited messages
+@app.event("message")
+def handle_message_events(event, say):
+    subtype = event.get('subtype')
+
+    if subtype == 'message_changed':
+        updated = event.get('message', {})
+        original_text = updated.get('text', '')
+        channel_id = event.get('channel', '')
+        ts = updated.get('ts', '')
+        user_id = updated.get('user', '')
+
+        # Remove old dedup entry so the edited version is evaluated fresh
+        key = (channel_id, ts)
+        if key in processed_messages:
+            processed_messages.remove(key)
+        processed_messages.append(key)
+
+        if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
+            return
+
+        # Exclude thread replies
+        thread_ts = updated.get('thread_ts')
+        if thread_ts and thread_ts != ts:
+            return
+
+        # If already evaluated, only re-evaluate if the edit introduces new cake keywords
+        if key in evaluated_messages:
+            text_lower = original_text.lower()
+            new_keywords = set(match_keywords(text_lower))
+            if not new_keywords - evaluated_messages[key]:
+                return
+
+        evaluate_message(original_text, channel_id, ts, updated.get('files', []), say, user_id=user_id, is_edit=True)
+
+# URL Verification route
+@flask_app.route("/slack/events", methods=["POST"])
+def slack_events():
+    if request.headers.get("X-Slack-Retry-Num"):
+        return "", 200
+    return handler.handle(request)
+
+# Start the Flask app or run in CLI mode
+def main():
+    import argparse
+    import sys
+
+    def print_assessment(text):
+        print(f"\n--- Testing Message: '{text}' ---")
+        found_keywords = match_keywords(text)
+
+        if found_keywords:
+            print(f"✅ Keywords found: {found_keywords}")
+            print("🤔 Assessing certainty with AI...")
+            result = assess_certainty(text)
+
+            print(f"\n--- Classifier Result ---")
+            print(f"Decision: {result['decision'].upper()}")
+            print(f"Total Certainty: {result['total_certainty']}%")
+            print(f"Reason: {result.get('reason', '')}")
+
+            classifier_forwarded = (
+                result['decision'] == "yes"
+                and result['total_certainty'] > Config.CERTAINTY_THRESHOLD
+            )
+            if classifier_forwarded:
+                print("\n⚖️  Classifier said yes + above threshold — running judge...")
+                judge = judge_decision(text, result.get('reason', ''))
+                print(f"\n--- Judge Result ---")
+                print(f"Verdict: {judge['verdict'].upper()}")
+                print(f"Reason: {judge['reason']}")
+                final = classifier_forwarded and judge['verdict'] != 'overturn'
+                print(f"\n--- Final ---")
+                print(f"{'✅ FORWARD' if final else '🚫 SUPPRESS'}")
+            else:
+                print("\n(Classifier below threshold — judge not run.)")
+        else:
+            print("❌ No cake keywords found.")
+
+    parser = argparse.ArgumentParser(description="Cake Radar Bot")
+    parser.add_argument("--test", type=str, help="Test a single message string")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
+    args = parser.parse_args()
+
+    if args.test:
+        print_assessment(args.test)
+        sys.exit(0)
+
+    if args.interactive:
+        print("🍰 Cake Radar Interactive Mode")
+        print("Type a message to test (or 'exit'/'quit' to stop):")
+        while True:
+            try:
+                user_input = input("\n> ")
+                if user_input.lower() in ['exit', 'quit']:
+                    break
+                if not user_input.strip():
+                    continue
+                print_assessment(user_input)
+            except KeyboardInterrupt:
+                break
+        print("\nBye! 👋")
+        sys.exit(0)
+
+    flask_app.run(host='0.0.0.0', port=Config.PORT)
+
+
+if __name__ == "__main__":
+    main()
