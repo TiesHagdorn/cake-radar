@@ -234,14 +234,34 @@ class TestDeduplication(unittest.TestCase):
             self.assertEqual(call.kwargs['response_format'], {"type": "json_object"})
 
     @patch('cake_radar.app.client')
-    def test_judge_panel_majority_overturn_suppresses(self, mock_client):
-        """Two overturn votes should suppress a classifier yes."""
+    def test_judge_panel_allows_two_overturns(self, mock_client):
+        """Two overturn votes should still forward after adding the hungry judge."""
         responses = []
         for content in (
             '{"verdict": "overturn", "reason": "future event"}',
             '{"verdict": "overturn", "reason": "party invite"}',
             '{"verdict": "uphold", "reason": "mentions food"}',
             '{"verdict": "uphold", "reason": "hungry colleague would want to know"}',
+        ):
+            response = MagicMock()
+            response.choices[0].message.content = content
+            responses.append(response)
+        mock_client.chat.completions.create.side_effect = responses
+
+        result = cake_radar.judge_decision("Cake next Friday at the party", "cake mentioned")
+
+        self.assertEqual(result['verdict'], 'uphold')
+        self.assertEqual(len(result['votes']), 4)
+
+    @patch('cake_radar.app.client')
+    def test_judge_panel_requires_three_overturns_to_suppress(self, mock_client):
+        """Three overturn votes should suppress a classifier yes."""
+        responses = []
+        for content in (
+            '{"verdict": "overturn", "reason": "future event"}',
+            '{"verdict": "overturn", "reason": "party invite"}',
+            '{"verdict": "overturn", "reason": "not available now"}',
+            '{"verdict": "uphold", "reason": "mentions food"}',
         ):
             response = MagicMock()
             response.choices[0].message.content = content
