@@ -49,20 +49,21 @@ def test_assess_certainty_positive(mock_client):
     """Verify assess_certainty handles positive AI response."""
     # Mock the OpenAI response
     mock_response = MagicMock()
-    mock_response.choices[0].message.content = "Yes, 95%"
+    mock_response.choices[0].message.content = '{"decision": "yes", "certainty": 95, "reason": "cake offered"}'
     mock_client.chat.completions.create.return_value = mock_response
 
     result = cake_radar.assess_certainty("There is cake")
     
     assert result['decision'] == 'yes'
     assert result['total_certainty'] == 95
+    assert mock_client.chat.completions.create.call_args.kwargs['response_format'] == {"type": "json_object"}
 
 @patch('cake_radar.app.client')
 def test_assess_certainty_negative(mock_client):
     """Verify assess_certainty handles negative AI response."""
     # Mock the OpenAI response
     mock_response = MagicMock()
-    mock_response.choices[0].message.content = "No, 10%"
+    mock_response.choices[0].message.content = '{"decision": "no", "certainty": 10, "reason": "not about food"}'
     mock_client.chat.completions.create.return_value = mock_response
 
     result = cake_radar.assess_certainty("Meeting time")

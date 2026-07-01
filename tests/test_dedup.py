@@ -212,9 +212,9 @@ class TestDeduplication(unittest.TestCase):
         """One dissenting judge should not suppress an otherwise valid alert."""
         responses = []
         for content in (
-            "uphold, current food in office",
-            "overturn, no explicit offer",
-            "uphold, reporting shared food",
+            '{"verdict": "uphold", "reason": "current food in office"}',
+            '{"verdict": "overturn", "reason": "no explicit offer"}',
+            '{"verdict": "uphold", "reason": "reporting shared food"}',
         ):
             response = MagicMock()
             response.choices[0].message.content = content
@@ -226,15 +226,17 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(result['verdict'], 'uphold')
         self.assertEqual(len(result['votes']), 3)
         self.assertEqual(mock_client.chat.completions.create.call_count, 3)
+        for call in mock_client.chat.completions.create.call_args_list:
+            self.assertEqual(call.kwargs['response_format'], {"type": "json_object"})
 
     @patch('cake_radar.app.client')
     def test_judge_panel_majority_overturn_suppresses(self, mock_client):
         """Two overturn votes should suppress a classifier yes."""
         responses = []
         for content in (
-            "overturn, future event",
-            "overturn, party invite",
-            "uphold, mentions food",
+            '{"verdict": "overturn", "reason": "future event"}',
+            '{"verdict": "overturn", "reason": "party invite"}',
+            '{"verdict": "uphold", "reason": "mentions food"}',
         ):
             response = MagicMock()
             response.choices[0].message.content = content
