@@ -73,6 +73,18 @@ class Config:
                 "reads merely as a joke, personal wish, work agenda mention, or private meal."
             ),
         },
+        {
+            "name": "hungry",
+            "prompt": (
+                "Cake Radar alerts colleagues when edible food or drink is likely available to share "
+                "in the Amsterdam office. The classifier already found this message likely relevant. "
+                "Your role is only to decide whether there is a clear reason to veto the alert. "
+                "Focus on appetite and recall. Uphold if a hungry colleague would reasonably want "
+                "to know about this message, including terse sightings like 'cake at entrance'. "
+                "Overturn only if it is clearly a non-food item, a future event, an out-of-scope "
+                "location, already gone, private/personal food, or an idiom/metaphor."
+            ),
+        },
     ]
     JUDGE_USER_PROMPT_TEMPLATE = (
         "The classifier said YES with reason: '{classifier_reason}'.\n\n"
