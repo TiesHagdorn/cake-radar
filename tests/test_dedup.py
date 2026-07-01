@@ -253,5 +253,58 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(result['verdict'], 'overturn')
         self.assertEqual(len(result['votes']), 3)
 
+    def test_format_judge_votes_includes_each_outcome_and_reason(self):
+        votes = [
+            {'name': 'availability', 'verdict': 'uphold', 'reason': 'available now'},
+            {'name': 'false_positive', 'verdict': 'overturn', 'reason': 'future event'},
+            {'name': 'social_context', 'verdict': 'uphold', 'reason': 'informal sighting'},
+        ]
+
+        formatted = cake_radar._format_judge_votes(votes)
+
+        self.assertEqual(
+            formatted,
+            "availability=uphold (available now); "
+            "false_positive=overturn (future event); "
+            "social_context=uphold (informal sighting)",
+        )
+
+    @patch('cake_radar.judge_decision')
+    @patch('cake_radar.assess_certainty')
+    def test_evaluation_log_includes_each_judge_vote(self, mock_assess, mock_judge):
+        mock_say = MagicMock()
+        mock_assess.return_value = {
+            'decision': 'yes',
+            'total_certainty': 97,
+            'reason': 'cake offered at entrance',
+            'prompt_tokens': 10,
+            'completion_tokens': 5,
+        }
+        mock_judge.return_value = {
+            'verdict': 'uphold',
+            'reason': 'panel summary',
+            'votes': [
+                {'name': 'availability', 'verdict': 'uphold', 'reason': 'available now'},
+                {'name': 'false_positive', 'verdict': 'overturn', 'reason': 'no explicit offer'},
+                {'name': 'social_context', 'verdict': 'uphold', 'reason': 'informal sighting'},
+            ],
+        }
+
+        with self.assertLogs(level='INFO') as logs:
+            cake_radar.evaluate_message(
+                "Hi, a cake :birthday: no name at the entrance!",
+                "C1",
+                "1782909778.761469",
+                [],
+                mock_say,
+                user_id="U1",
+            )
+
+        log_output = '\n'.join(logs.output)
+        self.assertIn("judge_panel=uphold", log_output)
+        self.assertIn("availability=uphold (available now)", log_output)
+        self.assertIn("false_positive=overturn (no explicit offer)", log_output)
+        self.assertIn("social_context=uphold (informal sighting)", log_output)
+
 if __name__ == '__main__':
     unittest.main()

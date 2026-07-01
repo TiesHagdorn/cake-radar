@@ -318,6 +318,12 @@ def judge_decision(message_text: str, classifier_reason: str, image_data_uris: L
     )
     return {'verdict': verdict, 'reason': reason, 'votes': votes}
 
+def _format_judge_votes(votes: List[Dict]) -> str:
+    return '; '.join(
+        f"{vote.get('name', 'unknown')}={vote.get('verdict', 'unknown')} ({vote.get('reason', '')})"
+        for vote in votes
+    )
+
 
 def send_slack_alert(say, channel_id, ts, certainty, target_channel):
     """Helper to format and send the Slack alert."""
@@ -352,10 +358,12 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     judge_verdict = None
     judge_reason = None
+    judge_votes = []
     if classifier_forwarded:
         judge = judge_decision(original_text, reason, image_data_uris)
         judge_verdict = judge['verdict']
         judge_reason = judge['reason']
+        judge_votes = judge.get('votes', [])
 
     forwarded = classifier_forwarded and judge_verdict != 'overturn'
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
@@ -363,7 +371,13 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     flat_text = ' '.join(original_text.split())
     reason_part = f" | reason={reason}" if reason else ""
-    judge_part = f" | judge={judge_verdict} ({judge_reason})" if judge_verdict else ""
+    judge_part = ""
+    if judge_verdict:
+        judge_part = f" | judge_panel={judge_verdict}"
+        if judge_votes:
+            judge_part += f" | judge_votes=[{_format_judge_votes(judge_votes)}]"
+        elif judge_reason:
+            judge_part += f" | judge_reason={judge_reason}"
     logging.info(
         f"{label} | {action} | AI={decision} {total_certainty}%{reason_part}{judge_part} | "
         f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "
