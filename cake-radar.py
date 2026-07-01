@@ -247,10 +247,55 @@ def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Di
         'completion_tokens': completion_tokens,
     }
 
-def judge_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
-    """Second-pass review of a classifier 'yes'. Can overturn to 'no'.
+def _parse_judge_response(raw_response: str) -> Dict:
+    raw = raw_response.strip().lower()
+    verdict, _, reason = raw.partition(',')
+    verdict = verdict.strip()
+    if verdict not in ('uphold', 'overturn'):
+        logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
+        return {'verdict': 'uphold', 'reason': f'parse_error: {raw[:80]}'}
+    return {'verdict': verdict, 'reason': reason.strip()}
 
-    Defaults to 'uphold' on any error so a judge outage cannot silently kill alerts.
+def _run_judge(judge_config: Dict, prompt_text: str, user_content) -> Dict:
+    judge_name = judge_config['name']
+
+    def _call(content):
+        return client.chat.completions.create(
+            model=Config.JUDGE_MODEL,
+            messages=[
+                {"role": "system", "content": judge_config['prompt']},
+                {"role": "user", "content": content},
+            ],
+        )
+
+    try:
+        response = _call(user_content)
+    except Exception as e:
+        notify_openai_operational_error(e, f'judge_{judge_name}')
+        if user_content != prompt_text:
+            logging.warning(f"Judge {judge_name} image error, retrying without images: {e}")
+            try:
+                response = _call(prompt_text)
+            except Exception as e2:
+                notify_openai_operational_error(e2, f'judge_{judge_name}_retry_without_images')
+                logging.error(f"Judge {judge_name} error, defaulting to uphold: {e2}")
+                return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
+        else:
+            logging.error(f"Judge {judge_name} error, defaulting to uphold: {e}")
+            return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
+
+    try:
+        result = _parse_judge_response(response.choices[0].message.content)
+        return {'name': judge_name, **result}
+    except Exception as e:
+        logging.error(f"Error parsing judge {judge_name} response, defaulting to uphold: {e}")
+        return {'name': judge_name, 'verdict': 'uphold', 'reason': 'parse_error'}
+
+def judge_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
+    """Run a small judge panel over a classifier 'yes'.
+
+    A 2-of-3 overturn majority is required to suppress. Each judge defaults to
+    uphold on error so judge outages cannot silently kill alerts.
     """
     prompt_text = Config.JUDGE_USER_PROMPT_TEMPLATE.format(
         message_text=message_text, classifier_reason=classifier_reason
@@ -262,42 +307,22 @@ def judge_decision(message_text: str, classifier_reason: str, image_data_uris: L
     else:
         user_content = prompt_text
 
-    def _call(content):
-        return client.chat.completions.create(
-            model=Config.JUDGE_MODEL,
-            messages=[
-                {"role": "system", "content": Config.JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": content},
-            ],
-        )
+    votes = [
+        _run_judge(judge_config, prompt_text, user_content)
+        for judge_config in Config.JUDGE_SYSTEM_PROMPTS
+    ]
+    overturns = sum(1 for vote in votes if vote['verdict'] == 'overturn')
+    verdict = 'overturn' if overturns >= 2 else 'uphold'
+    reason = '; '.join(
+        f"{vote['name']}={vote['verdict']}:{vote['reason']}" for vote in votes
+    )
+    return {'verdict': verdict, 'reason': reason, 'votes': votes}
 
-    try:
-        response = _call(user_content)
-    except Exception as e:
-        notify_openai_operational_error(e, 'judge')
-        if image_data_uris:
-            logging.warning(f"Judge image error, retrying without images: {e}")
-            try:
-                response = _call(prompt_text)
-            except Exception as e2:
-                notify_openai_operational_error(e2, 'judge_retry_without_images')
-                logging.error(f"Judge error, defaulting to uphold: {e2}")
-                return {'verdict': 'uphold', 'reason': 'judge_error'}
-        else:
-            logging.error(f"Judge error, defaulting to uphold: {e}")
-            return {'verdict': 'uphold', 'reason': 'judge_error'}
-
-    try:
-        raw = response.choices[0].message.content.strip().lower()
-        verdict, _, reason = raw.partition(',')
-        verdict = verdict.strip()
-        if verdict not in ('uphold', 'overturn'):
-            logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
-            return {'verdict': 'uphold', 'reason': f'parse_error: {raw[:80]}'}
-        return {'verdict': verdict, 'reason': reason.strip()}
-    except Exception as e:
-        logging.error(f"Error parsing judge response, defaulting to uphold: {e}")
-        return {'verdict': 'uphold', 'reason': 'parse_error'}
+def _format_judge_votes(votes: List[Dict]) -> str:
+    return '; '.join(
+        f"{vote.get('name', 'unknown')}={vote.get('verdict', 'unknown')} ({vote.get('reason', '')})"
+        for vote in votes
+    )
 
 
 def send_slack_alert(say, channel_id, ts, certainty, target_channel):
@@ -333,10 +358,12 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     judge_verdict = None
     judge_reason = None
+    judge_votes = []
     if classifier_forwarded:
         judge = judge_decision(original_text, reason, image_data_uris)
         judge_verdict = judge['verdict']
         judge_reason = judge['reason']
+        judge_votes = judge.get('votes', [])
 
     forwarded = classifier_forwarded and judge_verdict != 'overturn'
     action = "FORWARDED" if forwarded else "NOT_FORWARDED"
@@ -344,7 +371,13 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
 
     flat_text = ' '.join(original_text.split())
     reason_part = f" | reason={reason}" if reason else ""
-    judge_part = f" | judge={judge_verdict} ({judge_reason})" if judge_verdict else ""
+    judge_part = ""
+    if judge_verdict:
+        judge_part = f" | judge_panel={judge_verdict}"
+        if judge_votes:
+            judge_part += f" | judge_votes=[{_format_judge_votes(judge_votes)}]"
+        elif judge_reason:
+            judge_part += f" | judge_reason={judge_reason}"
     logging.info(
         f"{label} | {action} | AI={decision} {total_certainty}%{reason_part}{judge_part} | "
         f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "

@@ -187,5 +187,124 @@ class TestDeduplication(unittest.TestCase):
             self.assertIn('<!subteam^S0ACA5Y6W48>', kwargs['text'])
             self.assertIn("I'm broken, please check the logs", kwargs['text'])
 
+    def test_judge_policy_allows_unlabeled_shared_location_food(self):
+        """Judge instructions should not require an explicit offer for office treat sightings."""
+        judges = cake_radar.Config.JUDGE_SYSTEM_PROMPTS
+        prompts = {judge['name']: judge['prompt'].lower() for judge in judges}
+        combined_prompt = ' '.join(prompts.values())
+
+        self.assertEqual(
+            [judge['name'] for judge in judges],
+            ['availability', 'false_positive', 'social_context'],
+        )
+        self.assertEqual(combined_prompt.count("clear reason to veto"), 3)
+        self.assertIn("focus on availability", prompts['availability'])
+        self.assertIn("shared amsterdam office location", prompts['availability'])
+        self.assertIn("focus on known false positives", prompts['false_positive'])
+        self.assertIn("otherwise uphold", prompts['false_positive'])
+        self.assertIn("focus on social intent", prompts['social_context'])
+        self.assertIn("informal sightings", prompts['social_context'])
+        for category in (
+            "future event",
+            "non-food item",
+            "out-of-scope location",
+            "private/personal food",
+            "idiom/metaphor",
+            "birthday/congrats",
+        ):
+            self.assertIn(category, combined_prompt)
+
+    @patch('cake_radar.client')
+    def test_judge_panel_requires_two_overturns_to_suppress(self, mock_client):
+        """One dissenting judge should not suppress an otherwise valid alert."""
+        responses = []
+        for content in (
+            "uphold, current food in office",
+            "overturn, no explicit offer",
+            "uphold, reporting shared food",
+        ):
+            response = MagicMock()
+            response.choices[0].message.content = content
+            responses.append(response)
+        mock_client.chat.completions.create.side_effect = responses
+
+        result = cake_radar.judge_decision("Hi, a cake :birthday: no name at the entrance!", "cake offered")
+
+        self.assertEqual(result['verdict'], 'uphold')
+        self.assertEqual(len(result['votes']), 3)
+        self.assertEqual(mock_client.chat.completions.create.call_count, 3)
+
+    @patch('cake_radar.client')
+    def test_judge_panel_majority_overturn_suppresses(self, mock_client):
+        """Two overturn votes should suppress a classifier yes."""
+        responses = []
+        for content in (
+            "overturn, future event",
+            "overturn, party invite",
+            "uphold, mentions food",
+        ):
+            response = MagicMock()
+            response.choices[0].message.content = content
+            responses.append(response)
+        mock_client.chat.completions.create.side_effect = responses
+
+        result = cake_radar.judge_decision("Cake next Friday at the party", "cake mentioned")
+
+        self.assertEqual(result['verdict'], 'overturn')
+        self.assertEqual(len(result['votes']), 3)
+
+    def test_format_judge_votes_includes_each_outcome_and_reason(self):
+        votes = [
+            {'name': 'availability', 'verdict': 'uphold', 'reason': 'available now'},
+            {'name': 'false_positive', 'verdict': 'overturn', 'reason': 'future event'},
+            {'name': 'social_context', 'verdict': 'uphold', 'reason': 'informal sighting'},
+        ]
+
+        formatted = cake_radar._format_judge_votes(votes)
+
+        self.assertEqual(
+            formatted,
+            "availability=uphold (available now); "
+            "false_positive=overturn (future event); "
+            "social_context=uphold (informal sighting)",
+        )
+
+    @patch('cake_radar.judge_decision')
+    @patch('cake_radar.assess_certainty')
+    def test_evaluation_log_includes_each_judge_vote(self, mock_assess, mock_judge):
+        mock_say = MagicMock()
+        mock_assess.return_value = {
+            'decision': 'yes',
+            'total_certainty': 97,
+            'reason': 'cake offered at entrance',
+            'prompt_tokens': 10,
+            'completion_tokens': 5,
+        }
+        mock_judge.return_value = {
+            'verdict': 'uphold',
+            'reason': 'panel summary',
+            'votes': [
+                {'name': 'availability', 'verdict': 'uphold', 'reason': 'available now'},
+                {'name': 'false_positive', 'verdict': 'overturn', 'reason': 'no explicit offer'},
+                {'name': 'social_context', 'verdict': 'uphold', 'reason': 'informal sighting'},
+            ],
+        }
+
+        with self.assertLogs(level='INFO') as logs:
+            cake_radar.evaluate_message(
+                "Hi, a cake :birthday: no name at the entrance!",
+                "C1",
+                "1782909778.761469",
+                [],
+                mock_say,
+                user_id="U1",
+            )
+
+        log_output = '\n'.join(logs.output)
+        self.assertIn("judge_panel=uphold", log_output)
+        self.assertIn("availability=uphold (available now)", log_output)
+        self.assertIn("false_positive=overturn (no explicit offer)", log_output)
+        self.assertIn("social_context=uphold (informal sighting)", log_output)
+
 if __name__ == '__main__':
     unittest.main()
