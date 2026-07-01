@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from pathlib import Path
+from importlib import resources
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -86,8 +86,7 @@ class Config:
     @classmethod
     def load_keywords(cls):
         try:
-            keywords_path = Path(__file__).resolve().parent.parent / 'keywords.json'
-            with keywords_path.open('r') as f:
+            with resources.files("cake_radar").joinpath("keywords.json").open("r") as f:
                 base_keywords = json.load(f)
             plural_keywords = [k + 's' for k in base_keywords]
             cls.KEYWORDS = base_keywords + plural_keywords
