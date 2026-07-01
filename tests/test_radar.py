@@ -8,6 +8,20 @@ os.environ.setdefault('SLACK_TOKEN_VERIFICATION_ENABLED', 'false')
 
 from cake_radar import app as cake_radar
 
+def _decorator(*args, **kwargs):
+    def wrapper(func):
+        return func
+    return wrapper
+
+fake_slack_app = MagicMock()
+fake_slack_app.message.side_effect = _decorator
+fake_slack_app.event.side_effect = _decorator
+cake_radar.initialize(
+    slack_app=fake_slack_app,
+    openai_client=MagicMock(),
+    validate_config=False,
+)
+
 def test_keywords_loaded():
     """Verify keywords are loaded correctly."""
     assert len(cake_radar.Config.KEYWORDS) > 0
