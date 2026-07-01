@@ -8,12 +8,13 @@ Cake Radar is a lightweight Slack bot that helps colleagues find shared treats b
 
 Cake Radar first looks for messages that mention treat-related words. When a message looks promising, it asks an AI classifier whether this is likely about food or drink that colleagues can actually get.
 
-If the classifier is confident, three judges review the candidate from different angles:
+If the classifier is confident, four judges review the candidate from different angles:
 
 - Is the treat available now or very soon?
 - Is this clearly a false alarm, like a metaphor, future event, private lunch, or non-food item?
 - Does the message read like someone is alerting colleagues to shared office food?
+- Would a hungry colleague reasonably want to know about this sighting?
 
-Cake Radar only suppresses an alert when at least two judges agree it is a false alarm. Informal sightings still count, so "cake at the entrance" should be enough.
+Cake Radar only suppresses an alert when at least three judges agree it is a false alarm. Informal sightings still count, so "cake at the entrance" should be enough.
 
 Logs include the classifier result, the final judge-panel outcome, and each judge's vote with its reason.

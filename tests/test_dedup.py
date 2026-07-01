@@ -188,15 +188,18 @@ class TestDeduplication(unittest.TestCase):
 
         self.assertEqual(
             [judge['name'] for judge in judges],
-            ['availability', 'false_positive', 'social_context'],
+            ['availability', 'false_positive', 'social_context', 'hungry'],
         )
-        self.assertEqual(combined_prompt.count("clear reason to veto"), 3)
+        self.assertEqual(combined_prompt.count("clear reason to veto"), 4)
         self.assertIn("focus on availability", prompts['availability'])
         self.assertIn("shared amsterdam office location", prompts['availability'])
         self.assertIn("focus on known false positives", prompts['false_positive'])
         self.assertIn("otherwise uphold", prompts['false_positive'])
         self.assertIn("focus on social intent", prompts['social_context'])
         self.assertIn("informal sightings", prompts['social_context'])
+        self.assertIn("focus on appetite and recall", prompts['hungry'])
+        self.assertIn("hungry colleague would reasonably want", prompts['hungry'])
+        self.assertIn("cake at entrance", prompts['hungry'])
         for category in (
             "future event",
             "non-food item",
@@ -208,13 +211,14 @@ class TestDeduplication(unittest.TestCase):
             self.assertIn(category, combined_prompt)
 
     @patch('cake_radar.app.client')
-    def test_judge_panel_requires_two_overturns_to_suppress(self, mock_client):
+    def test_judge_panel_allows_one_overturn(self, mock_client):
         """One dissenting judge should not suppress an otherwise valid alert."""
         responses = []
         for content in (
             '{"verdict": "uphold", "reason": "current food in office"}',
             '{"verdict": "overturn", "reason": "no explicit offer"}',
             '{"verdict": "uphold", "reason": "reporting shared food"}',
+            '{"verdict": "uphold", "reason": "hungry colleagues would want to know"}',
         ):
             response = MagicMock()
             response.choices[0].message.content = content
@@ -224,18 +228,39 @@ class TestDeduplication(unittest.TestCase):
         result = cake_radar.judge_decision("Hi, a cake :birthday: no name at the entrance!", "cake offered")
 
         self.assertEqual(result['verdict'], 'uphold')
-        self.assertEqual(len(result['votes']), 3)
-        self.assertEqual(mock_client.chat.completions.create.call_count, 3)
+        self.assertEqual(len(result['votes']), 4)
+        self.assertEqual(mock_client.chat.completions.create.call_count, 4)
         for call in mock_client.chat.completions.create.call_args_list:
             self.assertEqual(call.kwargs['response_format'], {"type": "json_object"})
 
     @patch('cake_radar.app.client')
-    def test_judge_panel_majority_overturn_suppresses(self, mock_client):
-        """Two overturn votes should suppress a classifier yes."""
+    def test_judge_panel_allows_two_overturns(self, mock_client):
+        """Two overturn votes should still forward after adding the hungry judge."""
         responses = []
         for content in (
             '{"verdict": "overturn", "reason": "future event"}',
             '{"verdict": "overturn", "reason": "party invite"}',
+            '{"verdict": "uphold", "reason": "mentions food"}',
+            '{"verdict": "uphold", "reason": "hungry colleague would want to know"}',
+        ):
+            response = MagicMock()
+            response.choices[0].message.content = content
+            responses.append(response)
+        mock_client.chat.completions.create.side_effect = responses
+
+        result = cake_radar.judge_decision("Cake next Friday at the party", "cake mentioned")
+
+        self.assertEqual(result['verdict'], 'uphold')
+        self.assertEqual(len(result['votes']), 4)
+
+    @patch('cake_radar.app.client')
+    def test_judge_panel_requires_three_overturns_to_suppress(self, mock_client):
+        """Three overturn votes should suppress a classifier yes."""
+        responses = []
+        for content in (
+            '{"verdict": "overturn", "reason": "future event"}',
+            '{"verdict": "overturn", "reason": "party invite"}',
+            '{"verdict": "overturn", "reason": "not available now"}',
             '{"verdict": "uphold", "reason": "mentions food"}',
         ):
             response = MagicMock()
@@ -246,13 +271,14 @@ class TestDeduplication(unittest.TestCase):
         result = cake_radar.judge_decision("Cake next Friday at the party", "cake mentioned")
 
         self.assertEqual(result['verdict'], 'overturn')
-        self.assertEqual(len(result['votes']), 3)
+        self.assertEqual(len(result['votes']), 4)
 
     def test_format_judge_votes_includes_each_outcome_and_reason(self):
         votes = [
             {'name': 'availability', 'verdict': 'uphold', 'reason': 'available now'},
             {'name': 'false_positive', 'verdict': 'overturn', 'reason': 'future event'},
             {'name': 'social_context', 'verdict': 'uphold', 'reason': 'informal sighting'},
+            {'name': 'hungry', 'verdict': 'uphold', 'reason': 'worth knowing'},
         ]
 
         formatted = cake_radar._format_judge_votes(votes)
@@ -261,7 +287,8 @@ class TestDeduplication(unittest.TestCase):
             formatted,
             "availability=uphold (available now); "
             "false_positive=overturn (future event); "
-            "social_context=uphold (informal sighting)",
+            "social_context=uphold (informal sighting); "
+            "hungry=uphold (worth knowing)",
         )
 
     @patch('cake_radar.app.judge_decision')
@@ -282,6 +309,7 @@ class TestDeduplication(unittest.TestCase):
                 {'name': 'availability', 'verdict': 'uphold', 'reason': 'available now'},
                 {'name': 'false_positive', 'verdict': 'overturn', 'reason': 'no explicit offer'},
                 {'name': 'social_context', 'verdict': 'uphold', 'reason': 'informal sighting'},
+                {'name': 'hungry', 'verdict': 'uphold', 'reason': 'worth knowing'},
             ],
         }
 
@@ -300,6 +328,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertIn("availability=uphold (available now)", log_output)
         self.assertIn("false_positive=overturn (no explicit offer)", log_output)
         self.assertIn("social_context=uphold (informal sighting)", log_output)
+        self.assertIn("hungry=uphold (worth knowing)", log_output)
 
 if __name__ == '__main__':
     unittest.main()

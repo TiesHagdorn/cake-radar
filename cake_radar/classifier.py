@@ -181,7 +181,7 @@ def judge_decision(
         for judge_config in Config.JUDGE_SYSTEM_PROMPTS
     ]
     overturns = sum(1 for vote in votes if vote['verdict'] == 'overturn')
-    verdict = 'overturn' if overturns >= 2 else 'uphold'
+    verdict = 'overturn' if overturns >= 3 else 'uphold'
     reason = '; '.join(
         f"{vote['name']}={vote['verdict']}:{vote['reason']}" for vote in votes
     )
