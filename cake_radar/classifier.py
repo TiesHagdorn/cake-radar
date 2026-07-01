@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Callable, Dict, List
 
@@ -29,6 +30,35 @@ def _user_content(prompt_text: str, image_data_uris: List[str] = None):
     return user_content
 
 
+def _usage(response):
+    usage = getattr(response, 'usage', None)
+    return {
+        'prompt_tokens': getattr(usage, 'prompt_tokens', 0),
+        'completion_tokens': getattr(usage, 'completion_tokens', 0),
+    }
+
+
+def parse_classifier_response(raw_response: str, response=None) -> Dict:
+    try:
+        parsed = json.loads(raw_response)
+        decision = str(parsed.get('decision', '')).strip().lower()
+        if decision not in ('yes', 'no'):
+            raise ValueError(f"unexpected decision {decision!r}")
+
+        total_certainty = int(parsed.get('certainty', parsed.get('total_certainty', 0)))
+        total_certainty = max(0, min(total_certainty, 100))
+        reason = str(parsed.get('reason', '')).strip().lower()
+        return {
+            'decision': decision,
+            'total_certainty': total_certainty,
+            'reason': reason,
+            **_usage(response),
+        }
+    except Exception as e:
+        logging.error(f"Error parsing OpenAI response: {e}")
+        return {'decision': 'no', 'total_certainty': 0, 'reason': '', 'prompt_tokens': 0, 'completion_tokens': 0}
+
+
 def assess_certainty(
     openai_client,
     message_text: str,
@@ -45,7 +75,8 @@ def assess_certainty(
             messages=[
                 {"role": "system", "content": Config.SYSTEM_PROMPT},
                 {"role": "user", "content": content}
-            ]
+            ],
+            response_format={"type": "json_object"},
         )
 
     try:
@@ -79,39 +110,20 @@ def assess_certainty(
             logging.error(f"Error assessing certainty: {e}")
             return {'decision': 'no', 'total_certainty': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
 
-    reason = ''
-    try:
-        assessment = response.choices[0].message.content.strip().lower()
-        parts = [p.strip() for p in assessment.split(',')]
-        decision = parts[0]
-        total_certainty = 0
-        if len(parts) >= 2:
-            total_certainty = int(parts[1].replace('%', ''))
-        if len(parts) >= 3:
-            reason = ', '.join(parts[2:])
-        prompt_tokens = response.usage.prompt_tokens
-        completion_tokens = response.usage.completion_tokens
-    except Exception as e:
-        logging.error(f"Error parsing OpenAI response: {e}")
-        return {'decision': 'no', 'total_certainty': 0, 'reason': '', 'prompt_tokens': 0, 'completion_tokens': 0}
-
-    return {
-        'decision': decision,
-        'total_certainty': total_certainty,
-        'reason': reason,
-        'prompt_tokens': prompt_tokens,
-        'completion_tokens': completion_tokens,
-    }
+    return parse_classifier_response(response.choices[0].message.content, response)
 
 
 def parse_judge_response(raw_response: str) -> Dict:
-    raw = raw_response.strip().lower()
-    verdict, _, reason = raw.partition(',')
-    verdict = verdict.strip()
-    if verdict not in ('uphold', 'overturn'):
-        logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
-        return {'verdict': 'uphold', 'reason': f'parse_error: {raw[:80]}'}
-    return {'verdict': verdict, 'reason': reason.strip()}
+    try:
+        parsed = json.loads(raw_response)
+        verdict = str(parsed.get('verdict', '')).strip().lower()
+        if verdict not in ('uphold', 'overturn'):
+            logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
+            return {'verdict': 'uphold', 'reason': f'parse_error: {raw_response[:80]}'}
+        return {'verdict': verdict, 'reason': str(parsed.get('reason', '')).strip().lower()}
+    except Exception as e:
+        logging.error(f"Error parsing judge response, defaulting to uphold: {e}")
+        return {'verdict': 'uphold', 'reason': 'parse_error'}
 
 
 def _run_judge(openai_client, judge_config: Dict, prompt_text: str, user_content, notify_operational_error) -> Dict:
@@ -124,6 +136,7 @@ def _run_judge(openai_client, judge_config: Dict, prompt_text: str, user_content
                 {"role": "system", "content": judge_config['prompt']},
                 {"role": "user", "content": content},
             ],
+            response_format={"type": "json_object"},
         )
 
     try:
@@ -180,4 +193,3 @@ def format_judge_votes(votes: List[Dict]) -> str:
         f"{vote.get('name', 'unknown')}={vote.get('verdict', 'unknown')} ({vote.get('reason', '')})"
         for vote in votes
     )
-
