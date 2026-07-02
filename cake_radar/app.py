@@ -198,6 +198,20 @@ def send_slack_alert(say, channel_id, ts, certainty, target_channel):
     except Exception as e:
         logging.error(f"Error sending message to {target_channel}: {e}")
 
+
+def _is_public_source_channel(payload: Dict, channel_id: str) -> bool:
+    channel_type = payload.get('channel_type') or payload.get('message', {}).get('channel_type')
+    if channel_type:
+        is_public = channel_type == 'channel'
+    else:
+        is_public = channel_id.startswith('C')
+
+    if not is_public:
+        logging.info(f"SKIPPED_PRIVATE_SOURCE | channel_type={channel_type or 'unknown'} | {channel_id}")
+
+    return is_public
+
+
 def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, say, user_id: str = '', is_edit: bool = False):
     """Run keyword matching, AI evaluation, logging, and forwarding for a message."""
     text = original_text.lower()
@@ -269,6 +283,11 @@ def handle_message(message, say):
     if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
         return
 
+    # Only forward messages from public channels. Private channels, DMs, and group DMs
+    # may contain sensitive context and should never be reposted to #cake-radar.
+    if not _is_public_source_channel(message, channel_id):
+        return
+
     evaluate_message(original_text, channel_id, ts, message.get('files', []), say, user_id=user_id)
 
 
@@ -289,6 +308,11 @@ def handle_message_events(event, say):
         processed_messages.append(key)
 
         if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
+            return
+
+        # Only forward messages from public channels. Private channels, DMs, and group DMs
+        # may contain sensitive context and should never be reposted to #cake-radar.
+        if not _is_public_source_channel(event, channel_id):
             return
 
         # Exclude thread replies

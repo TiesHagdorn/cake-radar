@@ -165,6 +165,44 @@ class TestDeduplication(unittest.TestCase):
         # Should NOT be processed
         self.assertEqual(mock_assess.call_count, 0)
 
+    @patch('cake_radar.app.assess_certainty')
+    def test_private_channels_are_ignored(self, mock_assess):
+        """Messages from private channels should never be evaluated or forwarded."""
+        mock_say = MagicMock()
+
+        msg = {'text': 'cake', 'channel': 'GPRIVATE', 'ts': '1000.00', 'channel_type': 'group'}
+        cake_radar.handle_message(msg, mock_say)
+
+        self.assertEqual(mock_assess.call_count, 0)
+        mock_say.assert_not_called()
+
+    @patch('cake_radar.app.assess_certainty')
+    def test_dms_are_ignored(self, mock_assess):
+        """DMs should never be evaluated or forwarded."""
+        mock_say = MagicMock()
+
+        msg = {'text': 'cake', 'channel': 'DUSER', 'ts': '1000.00', 'channel_type': 'im'}
+        cake_radar.handle_message(msg, mock_say)
+
+        self.assertEqual(mock_assess.call_count, 0)
+        mock_say.assert_not_called()
+
+    @patch('cake_radar.app.assess_certainty')
+    def test_private_channel_edits_are_ignored(self, mock_assess):
+        """Edited messages from private channels should never be evaluated or forwarded."""
+        mock_say = MagicMock()
+
+        edit_event = {
+            'subtype': 'message_changed',
+            'channel': 'GPRIVATE',
+            'channel_type': 'group',
+            'message': {'text': 'cake in the kitchen', 'ts': '1000.00', 'files': []},
+        }
+        cake_radar.handle_message_events(edit_event, mock_say)
+
+        self.assertEqual(mock_assess.call_count, 0)
+        mock_say.assert_not_called()
+
     def test_openai_auth_error_sends_operational_alert(self):
         """OpenAI auth failures should alert in the test/support channel."""
         error = Exception("Error code: 401 - {'error': {'code': 'invalid_api_key'}}")
