@@ -21,6 +21,24 @@ evaluated_messages = {}
 # Channel name cache: id -> "#name"
 _channel_name_cache: Dict[str, str] = {}
 
+
+class SlackEventsAccessLogFilter(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage()
+        return not (
+            '"POST /slack/events HTTP/' in message
+            and '" 200 ' in message
+            and '"Slackbot 1.0 ' in message
+        )
+
+
+def _install_access_log_filters():
+    for logger_name in ('gunicorn.access', 'werkzeug'):
+        logger = logging.getLogger(logger_name)
+        if not any(isinstance(log_filter, SlackEventsAccessLogFilter) for log_filter in logger.filters):
+            logger.addFilter(SlackEventsAccessLogFilter())
+
+
 def _channel_name(channel_id: str) -> str:
     if channel_id not in _channel_name_cache:
         try:
@@ -56,17 +74,28 @@ flask_app.logger.disabled = True
 app = None
 client = None
 handler = None
+_logging_configured = False
 
 def configure_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(levelname)-7s %(message)s',
-        handlers=[logging.StreamHandler()],
-    )
+    global _logging_configured
+
+    _install_access_log_filters()
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        root_logger.setLevel(logging.INFO)
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(levelname)-7s %(message)s',
+            handlers=[logging.StreamHandler()],
+        )
     logging.getLogger('werkzeug').setLevel(logging.CRITICAL)
     logging.getLogger('gunicorn.access').setLevel(logging.WARNING)
     logging.getLogger('gunicorn.error').setLevel(logging.WARNING)
     logging.getLogger('httpx').setLevel(logging.WARNING)
+    _logging_configured = True
+
+configure_logging()
 
 def initialize(slack_app=None, openai_client=None, validate_config=True):
     """Initialize external clients and register Slack handlers."""
