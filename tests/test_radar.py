@@ -1,4 +1,5 @@
 import os
+import logging
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault('SLACK_BOT_TOKEN', 'xoxb-dummy')
@@ -27,6 +28,39 @@ def test_keywords_loaded():
     assert len(cake_radar.Config.KEYWORDS) > 0
     assert "cake" in cake_radar.Config.KEYWORDS
     assert "croissant" in cake_radar.Config.KEYWORDS
+
+def _log_record(message):
+    return logging.LogRecord(
+        name='gunicorn.access',
+        level=logging.INFO,
+        pathname='',
+        lineno=0,
+        msg=message,
+        args=(),
+        exc_info=None,
+    )
+
+def test_slack_events_access_log_filter_suppresses_successful_slackbot_posts():
+    record = _log_record(
+        '127.0.0.1 - - [02/Jul/2026:08:40:54 +0000] '
+        '"POST /slack/events HTTP/1.1" 200 0 "-" '
+        '"Slackbot 1.0 (+https://api.slack.com/robots)"'
+    )
+
+    assert not cake_radar.SlackEventsAccessLogFilter().filter(record)
+
+def test_slack_events_access_log_filter_keeps_non_success_logs():
+    record = _log_record(
+        '127.0.0.1 - - [02/Jul/2026:08:40:54 +0000] '
+        '"POST /slack/events HTTP/1.1" 500 0 "-" '
+        '"Slackbot 1.0 (+https://api.slack.com/robots)"'
+    )
+
+    assert cake_radar.SlackEventsAccessLogFilter().filter(record)
+
+def test_logging_is_configured_when_app_is_imported():
+    assert cake_radar._logging_configured
+    assert logging.getLogger().level <= logging.INFO
 
 def test_keyword_matching():
     """Verify regex matching works for various cake phrases."""
