@@ -69,6 +69,13 @@ def _fmt_ts(ts: str) -> str:
     except Exception:
         return ts
 
+
+def _canonical_changed_message_ts(event: Dict) -> str:
+    """Return the Slack message ts for an edit event, not the edit event ts."""
+    previous = event.get('previous_message') or {}
+    updated = event.get('message') or {}
+    return previous.get('ts') or updated.get('ts', '')
+
 flask_app = Flask(__name__)
 flask_app.logger.disabled = True
 app = None
@@ -298,7 +305,7 @@ def handle_message_events(event, say):
         updated = event.get('message', {})
         original_text = updated.get('text', '')
         channel_id = event.get('channel', '')
-        ts = updated.get('ts', '')
+        ts = _canonical_changed_message_ts(event)
         user_id = updated.get('user', '')
 
         # Remove old dedup entry so the edited version is evaluated fresh
