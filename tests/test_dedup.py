@@ -153,6 +153,42 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.handle_message_events(edit_event, mock_say)
         self.assertEqual(mock_assess.call_count, 2)
 
+    @patch('cake_radar.app.judge_decision')
+    @patch('cake_radar.app.assess_certainty')
+    def test_edit_alert_links_to_original_message_ts(self, mock_assess, mock_judge):
+        """Edited message alerts should link to the message ts, not the edit event ts."""
+        mock_say = MagicMock()
+        mock_assess.return_value = {
+            'decision': 'yes',
+            'total_certainty': 90,
+            'reason': 'cake available',
+            'prompt_tokens': 10,
+            'completion_tokens': 5,
+        }
+        mock_judge.return_value = {'verdict': 'uphold', 'reason': 'food is available'}
+
+        edit_event = {
+            'subtype': 'message_changed',
+            'channel': 'C1',
+            'channel_type': 'channel',
+            'previous_message': {
+                'text': 'rollout update',
+                'ts': '1784732573.261519',
+            },
+            'message': {
+                'text': "there's even :cake-radar: to celebrate",
+                'ts': '1784733038.575069',
+                'files': [],
+            },
+        }
+
+        cake_radar.handle_message_events(edit_event, mock_say)
+
+        mock_say.assert_called_once()
+        alert_text = mock_say.call_args.kwargs['text']
+        self.assertIn('/p1784732573261519', alert_text)
+        self.assertNotIn('/p1784733038575069', alert_text)
+
     @patch('cake_radar.app.assess_certainty')
     def test_thread_replies_ignored(self, mock_assess):
         """Verify that thread replies are ignored."""
