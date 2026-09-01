@@ -33,6 +33,7 @@ class TestDeduplication(unittest.TestCase):
         )
         cake_radar.Config.OPERATIONAL_ALERT_CHANNEL = 'COPS'
         cake_radar.Config.OPERATIONAL_ALERT_SUPPORT_MENTION = '@support'
+        cake_radar.Config.CAKE_RADAR_CHANNEL_ID = 'C07RTPCLAKC'
         cake_radar.app.client.chat_postMessage.reset_mock()
 
     def tearDown(self):
@@ -200,6 +201,46 @@ class TestDeduplication(unittest.TestCase):
         
         # Should NOT be processed
         self.assertEqual(mock_assess.call_count, 0)
+
+    @patch('cake_radar.app.assess_certainty')
+    def test_cake_radar_channel_messages_are_ignored(self, mock_assess):
+        """Cake Radar should never evaluate messages posted in its own alert channel."""
+        mock_say = MagicMock()
+
+        msg = {
+            'text': ':green-light-blinker: *Cake Alert!* cake next to the coffee machine',
+            'channel': 'C07RTPCLAKC',
+            'ts': '1788253894.092969',
+            'channel_type': 'channel',
+        }
+        cake_radar.handle_message(msg, mock_say)
+
+        self.assertEqual(mock_assess.call_count, 0)
+        mock_say.assert_not_called()
+
+    @patch('cake_radar.app.assess_certainty')
+    def test_cake_radar_channel_edits_are_ignored(self, mock_assess):
+        """Cake Radar should ignore edits to messages in its own alert channel."""
+        mock_say = MagicMock()
+
+        edit_event = {
+            'subtype': 'message_changed',
+            'channel': 'C07RTPCLAKC',
+            'channel_type': 'channel',
+            'previous_message': {
+                'text': ':green-light-blinker: *Cake Alert!* cake next to the coffee machine',
+                'ts': '1788253894.092969',
+            },
+            'message': {
+                'text': ':green-light-blinker: *Cake Alert!* cake next to the coffee machine',
+                'ts': '1788253894.092969',
+                'files': [],
+            },
+        }
+        cake_radar.handle_message_events(edit_event, mock_say)
+
+        self.assertEqual(mock_assess.call_count, 0)
+        mock_say.assert_not_called()
 
     @patch('cake_radar.app.assess_certainty')
     def test_private_channels_are_ignored(self, mock_assess):
