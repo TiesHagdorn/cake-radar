@@ -6,7 +6,8 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Dict, List
-from collections import deque
+from collections import OrderedDict, deque
+from threading import Lock
 from . import classifier
 from .config import Config
 from .images import download_slack_images as _download_slack_images
@@ -17,6 +18,15 @@ processed_messages = deque(maxlen=1000)
 
 # Track evaluated messages: (channel_id, ts) -> set of matched keywords (used to suppress duplicate edit logs)
 evaluated_messages = {}
+
+# A Slack message can arrive as its original event and one or more
+# ``message_changed`` events at almost the same time. Keep a single, atomic
+# claim for the source message while it is being classified, otherwise each
+# event can pass the old "already evaluated" check before any has finished the
+# AI calls and all of them post an alert.
+_MAX_MESSAGE_STATES = 1000
+_message_states = OrderedDict()
+_message_state_lock = Lock()
 
 # Channel name cache: id -> "#name"
 _channel_name_cache: Dict[str, str] = {}
@@ -75,6 +85,57 @@ def _canonical_changed_message_ts(event: Dict) -> str:
     previous = event.get('previous_message') or {}
     updated = event.get('message') or {}
     return previous.get('ts') or updated.get('ts', '')
+
+
+def _claim_message_evaluation(channel_id: str, ts: str, text: str, is_edit: bool) -> bool:
+    """Atomically reserve a source message for evaluation.
+
+    An edit may be evaluated after a non-forwarded result only when it adds a
+    new keyword. Once an alert was sent, later edits are intentionally silent:
+    Cake Radar posts one alert per source Slack message.
+    """
+    key = (channel_id, ts)
+    keywords = set(match_keywords(text.lower()))
+    if not keywords:
+        return False
+
+    with _message_state_lock:
+        state = _message_states.get(key)
+        if state is None:
+            state = {
+                'in_flight': False,
+                'evaluated': False,
+                'forwarded': False,
+                'keywords': set(),
+            }
+            _message_states[key] = state
+
+        if state['in_flight'] or state['forwarded']:
+            return False
+
+        if state['evaluated']:
+            if not is_edit or not keywords - state['keywords']:
+                return False
+
+        state['in_flight'] = True
+        _message_states.move_to_end(key)
+        while len(_message_states) > _MAX_MESSAGE_STATES:
+            _message_states.popitem(last=False)
+        return True
+
+
+def _complete_message_evaluation(channel_id: str, ts: str, text: str, forwarded: bool) -> None:
+    """Release an evaluation claim and retain its outcome for later edits."""
+    key = (channel_id, ts)
+    with _message_state_lock:
+        state = _message_states.get(key)
+        if state is None:
+            return
+        state['in_flight'] = False
+        state['evaluated'] = True
+        state['forwarded'] = state['forwarded'] or forwarded
+        state['keywords'].update(match_keywords(text.lower()))
+        _message_states.move_to_end(key)
 
 flask_app = Flask(__name__)
 flask_app.logger.disabled = True
@@ -269,6 +330,8 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
     if forwarded:
         send_slack_alert(say, channel_id, ts, total_certainty, Config.ALERT_CHANNEL)
 
+    return forwarded
+
 
 def handle_message(message, say):
     original_text = message.get('text', '')
@@ -276,11 +339,6 @@ def handle_message(message, say):
     ts = message['ts']
     thread_ts = message.get('thread_ts')
     user_id = message.get('user', '')
-
-    # Deduplicate messages to prevent handling retries
-    if (channel_id, ts) in processed_messages:
-        return
-    processed_messages.append((channel_id, ts))
 
     # Exclude thread replies
     if thread_ts and thread_ts != ts:
@@ -295,7 +353,15 @@ def handle_message(message, say):
     if not _is_public_source_channel(message, channel_id):
         return
 
-    evaluate_message(original_text, channel_id, ts, message.get('files', []), say, user_id=user_id)
+    if not _claim_message_evaluation(channel_id, ts, original_text, is_edit=False):
+        return
+
+    processed_messages.append((channel_id, ts))
+    forwarded = False
+    try:
+        forwarded = evaluate_message(original_text, channel_id, ts, message.get('files', []), say, user_id=user_id)
+    finally:
+        _complete_message_evaluation(channel_id, ts, original_text, forwarded)
 
 
 def handle_message_events(event, say):
@@ -307,12 +373,6 @@ def handle_message_events(event, say):
         channel_id = event.get('channel', '')
         ts = _canonical_changed_message_ts(event)
         user_id = updated.get('user', '')
-
-        # Remove old dedup entry so the edited version is evaluated fresh
-        key = (channel_id, ts)
-        if key in processed_messages:
-            processed_messages.remove(key)
-        processed_messages.append(key)
 
         if channel_id == Config.CAKE_RADAR_CHANNEL_ID:
             return
@@ -327,14 +387,14 @@ def handle_message_events(event, say):
         if thread_ts and thread_ts != ts:
             return
 
-        # If already evaluated, only re-evaluate if the edit introduces new cake keywords
-        if key in evaluated_messages:
-            text_lower = original_text.lower()
-            new_keywords = set(match_keywords(text_lower))
-            if not new_keywords - evaluated_messages[key]:
-                return
+        if not _claim_message_evaluation(channel_id, ts, original_text, is_edit=True):
+            return
 
-        evaluate_message(original_text, channel_id, ts, updated.get('files', []), say, user_id=user_id, is_edit=True)
+        forwarded = False
+        try:
+            forwarded = evaluate_message(original_text, channel_id, ts, updated.get('files', []), say, user_id=user_id, is_edit=True)
+        finally:
+            _complete_message_evaluation(channel_id, ts, original_text, forwarded)
 
 # URL Verification route
 @flask_app.route("/slack/events", methods=["POST"])

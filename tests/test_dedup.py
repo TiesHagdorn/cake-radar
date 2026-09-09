@@ -1,5 +1,6 @@
 import unittest
 import os
+import threading
 from unittest.mock import MagicMock, patch
 
 os.environ['SLACK_BOT_TOKEN'] = 'xoxb-dummy'
@@ -26,6 +27,7 @@ class TestDeduplication(unittest.TestCase):
         """Clear state before each test."""
         cake_radar.processed_messages.clear()
         cake_radar.evaluated_messages.clear()
+        cake_radar._message_states.clear()
         cake_radar.initialize(
             slack_app=_fake_slack_app(),
             openai_client=MagicMock(),
@@ -40,6 +42,7 @@ class TestDeduplication(unittest.TestCase):
         """Clear state after each test."""
         cake_radar.processed_messages.clear()
         cake_radar.evaluated_messages.clear()
+        cake_radar._message_states.clear()
 
     @patch('cake_radar.app.assess_certainty')
     def test_deduplication_logic(self, mock_assess):
@@ -92,8 +95,8 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(mock_assess.call_count, 1)
 
     @patch('cake_radar.app.assess_certainty')
-    def test_edit_new_keyword_triggers_reevaluation(self, mock_assess):
-        """Edited message with a brand-new cake keyword should be re-evaluated."""
+    def test_edit_new_keyword_after_alert_is_not_reforwarded(self, mock_assess):
+        """An already-alerted source message must never generate a second alert."""
         mock_say = MagicMock()
         mock_assess.return_value = {'decision': 'yes', 'total_certainty': 90, 'prompt_tokens': 10, 'completion_tokens': 5}
 
@@ -102,7 +105,7 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.handle_message(msg, mock_say)
         self.assertEqual(mock_assess.call_count, 1)
 
-        # Edit adds a new keyword (e.g. 'baklava') not in the original
+        # Even an edit that adds a new keyword must not create a second alert.
         edit_event = {
             'subtype': 'message_changed',
             'channel': 'C1',
@@ -110,8 +113,48 @@ class TestDeduplication(unittest.TestCase):
         }
         cake_radar.handle_message_events(edit_event, mock_say)
 
-        # Should have been re-evaluated because of new keyword
-        self.assertEqual(mock_assess.call_count, 2)
+        self.assertEqual(mock_assess.call_count, 1)
+
+    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.app.judge_decision')
+    def test_normal_and_edit_events_only_forward_once_when_concurrent(self, mock_judge, mock_assess):
+        """The original event and rapid edits must share one in-flight claim."""
+        mock_say = MagicMock()
+        entered_evaluation = threading.Event()
+        release_evaluation = threading.Event()
+
+        def assess(*_args, **_kwargs):
+            entered_evaluation.set()
+            release_evaluation.wait(timeout=2)
+            return {'decision': 'yes', 'total_certainty': 90, 'reason': 'cake available'}
+
+        mock_assess.side_effect = assess
+        mock_judge.return_value = {'verdict': 'uphold', 'reason': 'food is available'}
+        original = {'text': 'baklava at the round table', 'channel': 'C1', 'ts': '1000.00', 'channel_type': 'channel'}
+        edit = {
+            'subtype': 'message_changed',
+            'channel': 'C1',
+            'channel_type': 'channel',
+            'previous_message': {'ts': '1000.00'},
+            'message': {'text': 'baklava at the round table', 'ts': '1000.00', 'files': []},
+        }
+
+        original_thread = threading.Thread(target=cake_radar.handle_message, args=(original, mock_say))
+        original_thread.start()
+        self.assertTrue(entered_evaluation.wait(timeout=1))
+        edit_threads = [
+            threading.Thread(target=cake_radar.handle_message_events, args=(edit, mock_say))
+            for _ in range(2)
+        ]
+        for thread in edit_threads:
+            thread.start()
+        release_evaluation.set()
+        original_thread.join(timeout=2)
+        for thread in edit_threads:
+            thread.join(timeout=2)
+
+        self.assertEqual(mock_assess.call_count, 1)
+        mock_say.assert_called_once()
 
     @patch('cake_radar.app.assess_certainty')
     def test_edit_not_previously_forwarded_is_evaluated(self, mock_assess):
