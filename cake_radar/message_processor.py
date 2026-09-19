@@ -1,7 +1,7 @@
 """Process one Slack message from initial checks through to an optional alert."""
 
 import base64
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from datetime import datetime
 import io
 import logging
@@ -18,8 +18,6 @@ from . import ai_classifier
 from .config import Config
 
 
-processed_messages = deque(maxlen=1000)
-evaluated_messages = {}
 _MAX_MESSAGE_STATES = 1000
 _message_states = OrderedDict()
 _message_state_lock = Lock()
@@ -248,7 +246,6 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
         f"keywords={matched_keywords} | {_fmt_ts(ts)} | {_channel_name(channel_id)} | "
         f'{_user_name(user_id)} | "{" ".join(original_text.split())}"'
     )
-    evaluated_messages[(channel_id, ts)] = set(matched_keywords)
     if forwarded:
         _send_slack_alert(say, channel_id, ts, total_certainty)
     return forwarded
@@ -273,7 +270,6 @@ def _process_event(payload: Dict, message: Dict, say, is_edit: bool):
 
 
 def handle_message(message, say):
-    processed_messages.append((message['channel'], message['ts']))
     _process_event(message, message, say, is_edit=False)
 
 
