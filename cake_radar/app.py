@@ -149,7 +149,3 @@ def main():
         sys.exit(0)
 
     flask_app.run(host='0.0.0.0', port=Config.PORT)
-
-
-if __name__ == "__main__":
-    main()

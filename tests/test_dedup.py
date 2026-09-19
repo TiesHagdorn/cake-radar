@@ -25,8 +25,6 @@ class TestDeduplication(unittest.TestCase):
 
     def setUp(self):
         """Clear state before each test."""
-        cake_radar.processed_messages.clear()
-        cake_radar.evaluated_messages.clear()
         cake_radar._message_states.clear()
         cake_radar.configure(_fake_slack_app(), MagicMock())
         cake_radar.Config.OPERATIONAL_ALERT_CHANNEL = 'COPS'
@@ -36,8 +34,6 @@ class TestDeduplication(unittest.TestCase):
 
     def tearDown(self):
         """Clear state after each test."""
-        cake_radar.processed_messages.clear()
-        cake_radar.evaluated_messages.clear()
         cake_radar._message_states.clear()
 
     @patch('cake_radar.message_processor.assess_certainty')
@@ -77,8 +73,6 @@ class TestDeduplication(unittest.TestCase):
         msg = {'text': 'cake in the kitchen', 'channel': 'C1', 'ts': '1000.00'}
         cake_radar.handle_message(msg, mock_say)
         self.assertEqual(mock_assess.call_count, 1)
-        self.assertIn(('C1', '1000.00'), cake_radar.evaluated_messages)
-
         # Edit the message — same keywords, just minor rewording
         edit_event = {
             'subtype': 'message_changed',
@@ -162,8 +156,6 @@ class TestDeduplication(unittest.TestCase):
         msg = {'text': 'cake?', 'channel': 'C1', 'ts': '3000.00'}
         cake_radar.handle_message(msg, mock_say)
         self.assertEqual(mock_assess.call_count, 1)
-        self.assertIn(('C1', '3000.00'), cake_radar.evaluated_messages)
-
         # Edit with same keywords — should be suppressed
         edit_event = {
             'subtype': 'message_changed',
@@ -483,6 +475,3 @@ class TestDeduplication(unittest.TestCase):
         self.assertIn("false_positive=overturn (no explicit offer)", log_output)
         self.assertIn("social_context=uphold (informal sighting)", log_output)
         self.assertIn("hungry=uphold (worth knowing)", log_output)
-
-if __name__ == '__main__':
-    unittest.main()
