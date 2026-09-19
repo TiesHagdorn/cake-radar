@@ -7,7 +7,9 @@ os.environ.setdefault('SLACK_SIGNING_SECRET', 'dummy')
 os.environ.setdefault('OPENAI_API_KEY', 'dummy')
 os.environ.setdefault('SLACK_TOKEN_VERIFICATION_ENABLED', 'false')
 
-from cake_radar import app as cake_radar
+from cake_radar import ai_classifier
+from cake_radar import app as cake_radar_app
+from cake_radar import message_processor as cake_radar
 
 def _decorator(*args, **kwargs):
     def wrapper(func):
@@ -17,11 +19,7 @@ def _decorator(*args, **kwargs):
 fake_slack_app = MagicMock()
 fake_slack_app.message.side_effect = _decorator
 fake_slack_app.event.side_effect = _decorator
-cake_radar.initialize(
-    slack_app=fake_slack_app,
-    openai_client=MagicMock(),
-    validate_config=False,
-)
+cake_radar_app.initialize(slack_app=fake_slack_app, openai_client=MagicMock(), validate_config=False)
 
 def test_keywords_loaded():
     """Verify keywords are loaded correctly."""
@@ -47,7 +45,7 @@ def test_slack_events_access_log_filter_suppresses_successful_slackbot_posts():
         '"Slackbot 1.0 (+https://api.slack.com/robots)"'
     )
 
-    assert not cake_radar.SlackEventsAccessLogFilter().filter(record)
+    assert not cake_radar_app.SlackEventsAccessLogFilter().filter(record)
 
 def test_slack_events_access_log_filter_keeps_non_success_logs():
     record = _log_record(
@@ -56,10 +54,10 @@ def test_slack_events_access_log_filter_keeps_non_success_logs():
         '"Slackbot 1.0 (+https://api.slack.com/robots)"'
     )
 
-    assert cake_radar.SlackEventsAccessLogFilter().filter(record)
+    assert cake_radar_app.SlackEventsAccessLogFilter().filter(record)
 
 def test_logging_is_configured_when_app_is_imported():
-    assert cake_radar._logging_configured
+    assert cake_radar_app._logging_configured
     assert logging.getLogger().level <= logging.INFO
 
 def test_keyword_matching():
@@ -75,10 +73,10 @@ def test_keyword_matching():
     ]
     
     for text, expected in cases:
-        found = bool(cake_radar.match_keywords(text))
+        found = bool(cake_radar.find_cake_words(text))
         assert found == expected, f"Failed for text: '{text}'"
 
-@patch('cake_radar.app.client')
+@patch('cake_radar.message_processor._openai_client')
 def test_assess_certainty_positive(mock_client):
     """Verify assess_certainty handles positive AI response."""
     # Mock the OpenAI response
@@ -92,7 +90,7 @@ def test_assess_certainty_positive(mock_client):
     assert result['total_certainty'] == 95
     assert mock_client.chat.completions.create.call_args.kwargs['response_format'] == {"type": "json_object"}
 
-@patch('cake_radar.app.client')
+@patch('cake_radar.message_processor._openai_client')
 def test_assess_certainty_negative(mock_client):
     """Verify assess_certainty handles negative AI response."""
     # Mock the OpenAI response
@@ -105,7 +103,7 @@ def test_assess_certainty_negative(mock_client):
     assert 'no' in result['decision']
     assert result['total_certainty'] == 10
 
-@patch('cake_radar.app.client')
+@patch('cake_radar.message_processor._openai_client')
 def test_assess_certainty_garbage_response(mock_client):
     """Verify code handles garbage unexpected response gracefully."""
     # Mock the OpenAI response to be weird
