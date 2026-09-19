@@ -8,7 +8,7 @@ os.environ['SLACK_SIGNING_SECRET'] = 'dummy'
 os.environ['OPENAI_API_KEY'] = 'dummy'
 os.environ['SLACK_TOKEN_VERIFICATION_ENABLED'] = 'false'
 
-from cake_radar import app as cake_radar
+from cake_radar import message_processor as cake_radar
 
 def _decorator(*args, **kwargs):
     def wrapper(func):
@@ -28,15 +28,11 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.processed_messages.clear()
         cake_radar.evaluated_messages.clear()
         cake_radar._message_states.clear()
-        cake_radar.initialize(
-            slack_app=_fake_slack_app(),
-            openai_client=MagicMock(),
-            validate_config=False,
-        )
+        cake_radar.configure(_fake_slack_app(), MagicMock())
         cake_radar.Config.OPERATIONAL_ALERT_CHANNEL = 'COPS'
         cake_radar.Config.OPERATIONAL_ALERT_SUPPORT_MENTION = '@support'
         cake_radar.Config.CAKE_RADAR_CHANNEL_ID = 'C07RTPCLAKC'
-        cake_radar.app.client.chat_postMessage.reset_mock()
+        cake_radar._slack_app.client.chat_postMessage.reset_mock()
 
     def tearDown(self):
         """Clear state after each test."""
@@ -44,7 +40,7 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.evaluated_messages.clear()
         cake_radar._message_states.clear()
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_deduplication_logic(self, mock_assess):
         """Verify that messages with same channel_id and ts are ignored."""
         # Setup mock
@@ -71,7 +67,7 @@ class TestDeduplication(unittest.TestCase):
         # Should have been processed
         self.assertEqual(mock_assess.call_count, 2)
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_edit_no_new_keywords_not_reforwarded(self, mock_assess):
         """Edited message already forwarded with same keywords should not be forwarded again."""
         mock_say = MagicMock()
@@ -94,7 +90,7 @@ class TestDeduplication(unittest.TestCase):
         # Should NOT have been re-evaluated
         self.assertEqual(mock_assess.call_count, 1)
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_edit_new_keyword_after_alert_is_not_reforwarded(self, mock_assess):
         """An already-alerted source message must never generate a second alert."""
         mock_say = MagicMock()
@@ -115,8 +111,8 @@ class TestDeduplication(unittest.TestCase):
 
         self.assertEqual(mock_assess.call_count, 1)
 
-    @patch('cake_radar.app.assess_certainty')
-    @patch('cake_radar.app.judge_decision')
+    @patch('cake_radar.message_processor.assess_certainty')
+    @patch('cake_radar.message_processor.judge_decision')
     def test_normal_and_edit_events_only_forward_once_when_concurrent(self, mock_judge, mock_assess):
         """The original event and rapid edits must share one in-flight claim."""
         mock_say = MagicMock()
@@ -156,7 +152,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(mock_assess.call_count, 1)
         mock_say.assert_called_once()
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_edit_not_previously_forwarded_is_evaluated(self, mock_assess):
         """Edited message that was never forwarded should be evaluated normally."""
         mock_say = MagicMock()
@@ -177,7 +173,7 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.handle_message_events(edit_event, mock_say)
         self.assertEqual(mock_assess.call_count, 1)
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_edit_not_forwarded_new_keyword_triggers_reevaluation(self, mock_assess):
         """Edited non-forwarded message with a new keyword should be re-evaluated."""
         mock_say = MagicMock()
@@ -197,8 +193,8 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.handle_message_events(edit_event, mock_say)
         self.assertEqual(mock_assess.call_count, 2)
 
-    @patch('cake_radar.app.judge_decision')
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.judge_decision')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_edit_alert_links_to_original_message_ts(self, mock_assess, mock_judge):
         """Edited message alerts should link to the message ts, not the edit event ts."""
         mock_say = MagicMock()
@@ -233,7 +229,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertIn('/p1784732573261519', alert_text)
         self.assertNotIn('/p1784733038575069', alert_text)
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_thread_replies_ignored(self, mock_assess):
         """Verify that thread replies are ignored."""
         mock_say = MagicMock()
@@ -245,7 +241,7 @@ class TestDeduplication(unittest.TestCase):
         # Should NOT be processed
         self.assertEqual(mock_assess.call_count, 0)
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_cake_radar_channel_messages_are_ignored(self, mock_assess):
         """Cake Radar should never evaluate messages posted in its own alert channel."""
         mock_say = MagicMock()
@@ -261,7 +257,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(mock_assess.call_count, 0)
         mock_say.assert_not_called()
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_cake_radar_channel_edits_are_ignored(self, mock_assess):
         """Cake Radar should ignore edits to messages in its own alert channel."""
         mock_say = MagicMock()
@@ -285,7 +281,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(mock_assess.call_count, 0)
         mock_say.assert_not_called()
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_private_channels_are_ignored(self, mock_assess):
         """Messages from private channels should never be evaluated or forwarded."""
         mock_say = MagicMock()
@@ -296,7 +292,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(mock_assess.call_count, 0)
         mock_say.assert_not_called()
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_dms_are_ignored(self, mock_assess):
         """DMs should never be evaluated or forwarded."""
         mock_say = MagicMock()
@@ -307,7 +303,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(mock_assess.call_count, 0)
         mock_say.assert_not_called()
 
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_private_channel_edits_are_ignored(self, mock_assess):
         """Edited messages from private channels should never be evaluated or forwarded."""
         mock_say = MagicMock()
@@ -330,8 +326,8 @@ class TestDeduplication(unittest.TestCase):
         cake_radar.notify_openai_operational_error(error, 'classifier')
         cake_radar.notify_openai_operational_error(error, 'classifier')
 
-        self.assertEqual(cake_radar.app.client.chat_postMessage.call_count, 2)
-        for call in cake_radar.app.client.chat_postMessage.call_args_list:
+        self.assertEqual(cake_radar._slack_app.client.chat_postMessage.call_count, 2)
+        for call in cake_radar._slack_app.client.chat_postMessage.call_args_list:
             kwargs = call.kwargs
             self.assertEqual(kwargs['channel'], 'COPS')
             self.assertNotIn('thread_ts', kwargs)
@@ -368,7 +364,7 @@ class TestDeduplication(unittest.TestCase):
         ):
             self.assertIn(category, combined_prompt)
 
-    @patch('cake_radar.app.client')
+    @patch('cake_radar.message_processor._openai_client')
     def test_judge_panel_allows_one_overturn(self, mock_client):
         """One dissenting judge should not suppress an otherwise valid alert."""
         responses = []
@@ -391,7 +387,7 @@ class TestDeduplication(unittest.TestCase):
         for call in mock_client.chat.completions.create.call_args_list:
             self.assertEqual(call.kwargs['response_format'], {"type": "json_object"})
 
-    @patch('cake_radar.app.client')
+    @patch('cake_radar.message_processor._openai_client')
     def test_judge_panel_allows_two_overturns(self, mock_client):
         """Two overturn votes should still forward after adding the hungry judge."""
         responses = []
@@ -411,7 +407,7 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(result['verdict'], 'uphold')
         self.assertEqual(len(result['votes']), 4)
 
-    @patch('cake_radar.app.client')
+    @patch('cake_radar.message_processor._openai_client')
     def test_judge_panel_requires_three_overturns_to_suppress(self, mock_client):
         """Three overturn votes should suppress a classifier yes."""
         responses = []
@@ -439,7 +435,7 @@ class TestDeduplication(unittest.TestCase):
             {'name': 'hungry', 'verdict': 'uphold', 'reason': 'worth knowing'},
         ]
 
-        formatted = cake_radar._format_judge_votes(votes)
+        formatted = cake_radar.ai_classifier.format_judge_votes(votes)
 
         self.assertEqual(
             formatted,
@@ -449,8 +445,8 @@ class TestDeduplication(unittest.TestCase):
             "hungry=uphold (worth knowing)",
         )
 
-    @patch('cake_radar.app.judge_decision')
-    @patch('cake_radar.app.assess_certainty')
+    @patch('cake_radar.message_processor.judge_decision')
+    @patch('cake_radar.message_processor.assess_certainty')
     def test_evaluation_log_includes_each_judge_vote(self, mock_assess, mock_judge):
         mock_say = MagicMock()
         mock_assess.return_value = {
