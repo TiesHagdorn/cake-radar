@@ -23,6 +23,7 @@ _message_states = OrderedDict()
 _message_state_lock = Lock()
 _channel_name_cache: Dict[str, str] = {}
 _user_name_cache: Dict[str, str] = {}
+_bot_user_id = ''
 _slack_app = None
 _openai_client = None
 _heif_registered = False
@@ -31,9 +32,25 @@ _PILLOW_TO_OPENAI = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'GIF': 'image/gif
 
 def configure(slack_app, openai_client):
     """Set the clients used while processing Slack messages."""
-    global _slack_app, _openai_client
+    global _slack_app, _openai_client, _bot_user_id
     _slack_app = slack_app
     _openai_client = openai_client
+    _bot_user_id = ''
+
+
+def bot_user_id() -> str:
+    global _bot_user_id
+    if not _bot_user_id:
+        try:
+            _bot_user_id = _slack_app.client.auth_test()['user_id']
+        except Exception as error:
+            logging.error(f"Could not determine bot user id: {error}")
+    return _bot_user_id
+
+
+def mentions_bot(text: str) -> bool:
+    user_id = bot_user_id()
+    return bool(user_id) and f"<@{user_id}" in (text or '')
 
 
 def find_cake_words(text: str) -> List[str]:
@@ -173,8 +190,8 @@ def notify_openai_operational_error(error: Exception, context: str):
         logging.error(f"Failed to send operational alert: {slack_error}")
 
 
-def assess_certainty(message_text: str, image_data_uris: List[str] = None) -> Dict:
-    return ai_classifier.assess_certainty(_openai_client, message_text, notify_openai_operational_error, image_data_uris)
+def assess_certainty(message_text: str, image_data_uris: List[str] = None, extra_context: str = '') -> Dict:
+    return ai_classifier.assess_certainty(_openai_client, message_text, notify_openai_operational_error, image_data_uris, extra_context)
 
 
 def judge_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
@@ -206,12 +223,45 @@ def _is_public_source_channel(payload: Dict, channel_id: str) -> bool:
     return is_public
 
 
-def _send_slack_alert(say, channel_id: str, ts: str, certainty: int):
+def claim_forward(channel_id: str, ts: str) -> bool:
+    """Mark a message as forwarded; False if it already was."""
+    key = (channel_id, ts)
+    with _message_state_lock:
+        state = _message_states.setdefault(key, {'in_flight': False, 'evaluated': False, 'forwarded': False, 'keywords': set()})
+        if state['in_flight'] or state['forwarded']:
+            return False
+        state['forwarded'] = True
+        state['evaluated'] = True
+        _message_states.move_to_end(key)
+        while len(_message_states) > _MAX_MESSAGE_STATES:
+            _message_states.popitem(last=False)
+        return True
+
+
+def release_forward(channel_id: str, ts: str) -> None:
+    """Undo claim_forward when the alert could not be posted."""
+    with _message_state_lock:
+        state = _message_states.get((channel_id, ts))
+        if state:
+            state['forwarded'] = False
+
+
+def was_forwarded(channel_id: str, ts: str) -> bool:
+    with _message_state_lock:
+        state = _message_states.get((channel_id, ts))
+        return bool(state and state['forwarded'])
+
+
+def _send_slack_alert(say, channel_id: str, ts: str, certainty: int, thread_ts: str = '', suffix: str = '') -> bool:
     url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
+    if thread_ts and thread_ts != ts:
+        url += f"?thread_ts={thread_ts}&cid={channel_id}"
     try:
-        say(channel=Config.ALERT_CHANNEL, text=f":cake-radar: *<{url}|Cake detected!>* ({certainty}% certainty)")
+        say(channel=Config.ALERT_CHANNEL, text=f":cake-radar: *<{url}|Cake detected!>* ({certainty}% certainty){suffix}")
     except Exception as error:
         logging.error(f"Error sending message to {Config.ALERT_CHANNEL}: {error}")
+        return False
+    return True
 
 
 def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, say, user_id: str = '', is_edit: bool = False):
@@ -259,6 +309,9 @@ def _process_event(payload: Dict, message: Dict, say, is_edit: bool):
     if thread_ts and thread_ts != ts:
         return
     if channel_id == Config.CAKE_RADAR_CHANNEL_ID or not _is_public_source_channel(payload, channel_id):
+        return
+    # Messages that tag the bot are handled by the summon flow
+    if mentions_bot(text):
         return
     if not _claim_message_evaluation(channel_id, ts, text, is_edit):
         return

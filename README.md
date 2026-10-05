@@ -19,6 +19,15 @@ Cake Radar only suppresses an alert when at least three judges agree it is a fal
 
 Logs include the classifier result, the final judge-panel outcome, and each judge's vote with its reason.
 
+## Summoning Cake Radar
+
+Cake Radar only sees channels it has been added to. If it missed a treat, tag `@Cake Radar` in the thread, or in the channel right after the post.
+
+- If Slack asks whether to invite Cake Radar, click **Invite**. It picks up tags from the last hour as soon as it joins.
+- It scans the whole thread, or the last 10 top-level messages from today. The tag is a strong hint, so the bar is lower than for live alerts and the judge panel is skipped.
+- It reacts :cake-radar: when the treat is on the alert channel (new or already posted), and :x: when it finds no treat.
+- Adding Cake Radar to a channel without tagging it never posts old messages. Private channels are never cross-posted.
+
 ## Code map
 
 One Slack message follows this route:
@@ -27,6 +36,7 @@ One Slack message follows this route:
 
 - `app.py`: starts the web app and connects Slack events to Cake Radar.
 - `message_processor.py`: the complete decision path for a Slack message.
+- `summon.py`: handles tags of Cake Radar and the catch-up after it is invited to a channel.
 - `ai_classifier.py`: OpenAI classifier and judge-panel calls.
 - `config.py`: environment settings and prompts.
 - `keywords.json`: the cake and snack words Cake Radar recognises.
