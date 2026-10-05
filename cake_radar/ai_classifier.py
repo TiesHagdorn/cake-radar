@@ -51,8 +51,10 @@ def parse_classifier_response(raw_response: str, response=None) -> Dict:
         return {'decision': 'no', 'total_certainty': 0, 'reason': '', 'prompt_tokens': 0, 'completion_tokens': 0}
 
 
-def assess_certainty(openai_client, message_text: str, notify_operational_error: Callable[[Exception, str], None], image_data_uris: List[str] = None) -> Dict:
+def assess_certainty(openai_client, message_text: str, notify_operational_error: Callable[[Exception, str], None], image_data_uris: List[str] = None, extra_context: str = '') -> Dict:
     prompt_text = Config.USER_PROMPT_TEMPLATE.format(message_text=message_text)
+    if extra_context:
+        prompt_text = f"{prompt_text}\n\n{extra_context}"
     user_content = _user_content(prompt_text, image_data_uris)
 
     def call_openai(content):

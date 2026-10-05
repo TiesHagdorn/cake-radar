@@ -31,6 +31,21 @@ class Config:
     JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gpt-5.4")
     CERTAINTY_THRESHOLD = int(os.getenv("CERTAINTY_THRESHOLD", "85"))
 
+    # Summon (tagging Cake Radar to cross-post a treat it missed)
+    SUMMON_LOOKBACK_MESSAGES = int(os.getenv("SUMMON_LOOKBACK_MESSAGES", "10"))
+    SUMMON_MAX_EVALUATIONS = int(os.getenv("SUMMON_MAX_EVALUATIONS", "10"))
+    SUMMON_JOIN_LOOKBACK_SECONDS = int(os.getenv("SUMMON_JOIN_LOOKBACK_SECONDS", "3600"))
+    SUMMON_JOIN_THREAD_PARENT_LOOKBACK_SECONDS = int(os.getenv("SUMMON_JOIN_THREAD_PARENT_LOOKBACK_SECONDS", "86400"))
+    SUMMON_CERTAINTY_THRESHOLD = int(os.getenv("SUMMON_CERTAINTY_THRESHOLD", "60"))
+    SUMMON_SUCCESS_REACTION = os.getenv("SUMMON_SUCCESS_REACTION", "cake-radar")
+    SUMMON_FAILURE_REACTION = os.getenv("SUMMON_FAILURE_REACTION", "x")
+    SUMMON_PROMPT_HINT = (
+        "Context: a colleague explicitly tagged Cake Radar on this conversation because they believe "
+        "an edible treat is being offered here. Treat that as strong evidence. A message from the person "
+        "celebrating (e.g. their birthday or their special day) that mentions cake or treats counts as "
+        "an offering. Only answer 'no' if the message clearly has nothing to do with available food."
+    )
+
     # App Settings
     PORT = int(os.getenv("PORT", 3000))
     SLACK_TOKEN_VERIFICATION_ENABLED = _env_bool("SLACK_TOKEN_VERIFICATION_ENABLED", True)
