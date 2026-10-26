@@ -112,11 +112,11 @@ class TestLiveSummon(SummonTestCase):
         self.assertEqual(self.reactions(), ['x'])
 
     @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
-    def test_no_candidates_reacts_x(self, mock_assess):
+    def test_no_candidates_stays_silent(self, mock_assess):
         self.thread = [{'ts': '100.000001', 'user': 'U1', 'text': 'release notes for today'}]
         self.mention()
         mock_assess.assert_not_called()
-        self.assertEqual(self.reactions(), ['x'])
+        self.assertEqual(self.reactions(), [])
 
     @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
     def test_private_channel_is_never_crossposted(self, mock_assess):
@@ -126,7 +126,16 @@ class TestLiveSummon(SummonTestCase):
         mock_assess.assert_not_called()
         self.client.conversations_replies.assert_not_called()
         self.assertEqual(self.alerts(), [])
-        self.assertEqual(self.reactions(), ['x'])
+        self.assertEqual(self.reactions(), [])
+
+    @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
+    def test_unreadable_channel_stays_silent(self, mock_assess):
+        # e.g. a tag in a canvas comment, whose channel the bot can't read
+        self.client.conversations_replies.side_effect = Exception('not_in_channel')
+        self.mention()
+        mock_assess.assert_not_called()
+        self.assertEqual(self.alerts(), [])
+        self.assertEqual(self.reactions(), [])
 
     @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
     def test_failed_post_reacts_x_and_can_be_retried(self, mock_assess):

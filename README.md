@@ -27,7 +27,7 @@ Cake Radar only sees channels it has been added to. If it missed a treat, tag `@
 
 - If Slack asks whether to invite Cake Radar, click **Invite**. It picks up tags from the last hour as soon as it joins.
 - It scans the whole thread, or the last 10 top-level messages from today. The tag is a strong hint, so the bar is lower than for live alerts and the judge panel is skipped.
-- It reacts :cake-radar: when the treat is on the alert channel (new or already posted), and :x: when it finds no treat.
+- It reacts :cake-radar: when the treat is on the alert channel (new or already posted), and :x: when it checked messages but found no treat. It stays silent when there is nothing to check or it can't read the channel, like a private channel or a canvas comment.
 - Adding Cake Radar to a channel without tagging it never posts old messages. Private channels are never cross-posted.
 
 You can also forward a missed treat message to Cake Radar in a DM. It checks that one message with the same lower bar, without needing cake words, and replies in the DM whether it cross-posted it. This needs the `message.im` bot event and the `im:history` scope.

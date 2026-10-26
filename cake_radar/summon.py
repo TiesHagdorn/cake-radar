@@ -126,16 +126,16 @@ def run_summon(channel_id: str, mention_ts: str, thread_ts: str = '', user_id: s
     log_prefix = f"SUMMON ({source})"
     log_suffix = f"{mp._fmt_ts(mention_ts)} | {mp._channel_name(channel_id)} | {mp._user_name(user_id)}"
 
+    # Stay silent where the bot can't look: a stray tag in a private channel or a canvas comment
+    # shouldn't get a confusing :x:
     if not _channel_is_public(channel_id):
         logging.info(f"{log_prefix} | SKIPPED_PRIVATE_SOURCE | {log_suffix}")
-        _react(channel_id, mention_ts, Config.SUMMON_FAILURE_REACTION)
         return
 
     try:
         candidates = collect_candidates(channel_id, mention_ts, thread_ts)
     except Exception as error:
         logging.error(f"{log_prefix} | ERROR | could not read messages: {error} | {log_suffix}")
-        _react(channel_id, mention_ts, Config.SUMMON_FAILURE_REACTION)
         return
 
     already = find_already_alerted(channel_id, candidates)
@@ -164,7 +164,9 @@ def run_summon(channel_id: str, mention_ts: str, thread_ts: str = '', user_id: s
         logging.info(
             f"{log_prefix} | NOT_FORWARDED | candidates={len(candidates)} evaluated={len(to_evaluate)} | {log_suffix}"
         )
-        _react(channel_id, mention_ts, Config.SUMMON_FAILURE_REACTION)
+        # Only :x: when the AI actually rejected something; a tag with nothing treat-like nearby stays silent
+        if to_evaluate:
+            _react(channel_id, mention_ts, Config.SUMMON_FAILURE_REACTION)
         return
 
     posted = _cross_post(channel_id, best, best_result, f" · summoned by {mp._user_name(user_id)}" if user_id else '',
