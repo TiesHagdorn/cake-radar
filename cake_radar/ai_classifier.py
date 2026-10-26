@@ -83,21 +83,28 @@ def assess_certainty(openai_client, message_text: str, notify_operational_error:
     return parse_classifier_response(response.choices[0].message.content, response)
 
 
-def parse_judge_response(raw_response: str) -> Dict:
+_PANEL_VERDICTS = ('uphold', 'overturn')
+_RESCUE_VERDICTS = ('confirm', 'rescue')
+
+
+def parse_judge_response(raw_response: str, verdicts=_PANEL_VERDICTS) -> Dict:
+    """Parse a judge reply; anything unexpected falls back to verdicts[0], the safe default."""
+    default = verdicts[0]
     try:
         parsed = json.loads(raw_response)
         verdict = str(parsed.get('verdict', '')).strip().lower()
-        if verdict not in ('uphold', 'overturn'):
-            logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to uphold")
-            return {'verdict': 'uphold', 'reason': f'parse_error: {raw_response[:80]}'}
+        if verdict not in verdicts:
+            logging.warning(f"Judge returned unexpected verdict {verdict!r}, defaulting to {default}")
+            return {'verdict': default, 'reason': f'parse_error: {raw_response[:80]}'}
         return {'verdict': verdict, 'reason': str(parsed.get('reason', '')).strip().lower()}
     except Exception as error:
-        logging.error(f"Error parsing judge response, defaulting to uphold: {error}")
-        return {'verdict': 'uphold', 'reason': 'parse_error'}
+        logging.error(f"Error parsing judge response, defaulting to {default}: {error}")
+        return {'verdict': default, 'reason': 'parse_error'}
 
 
-def _run_judge(openai_client, judge_config: Dict, prompt_text: str, user_content, notify_operational_error) -> Dict:
+def _run_judge(openai_client, judge_config: Dict, prompt_text: str, user_content, notify_operational_error, verdicts=_PANEL_VERDICTS) -> Dict:
     judge_name = judge_config['name']
+    default = verdicts[0]
     def call_openai(content):
         return openai_client.chat.completions.create(model=Config.JUDGE_MODEL, messages=[{"role": "system", "content": judge_config['prompt']}, {"role": "user", "content": content}], response_format={"type": "json_object"})
     try:
@@ -105,20 +112,20 @@ def _run_judge(openai_client, judge_config: Dict, prompt_text: str, user_content
     except Exception as error:
         notify_operational_error(error, f'judge_{judge_name}')
         if user_content == prompt_text:
-            logging.error(f"Judge {judge_name} error, defaulting to uphold: {error}")
-            return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
+            logging.error(f"Judge {judge_name} error, defaulting to {default}: {error}")
+            return {'name': judge_name, 'verdict': default, 'reason': 'judge_error'}
         logging.warning(f"Judge {judge_name} image error, retrying without images: {error}")
         try:
             response = call_openai(prompt_text)
         except Exception as retry_error:
             notify_operational_error(retry_error, f'judge_{judge_name}_retry_without_images')
-            logging.error(f"Judge {judge_name} error, defaulting to uphold: {retry_error}")
-            return {'name': judge_name, 'verdict': 'uphold', 'reason': 'judge_error'}
+            logging.error(f"Judge {judge_name} error, defaulting to {default}: {retry_error}")
+            return {'name': judge_name, 'verdict': default, 'reason': 'judge_error'}
     try:
-        return {'name': judge_name, **parse_judge_response(response.choices[0].message.content)}
+        return {'name': judge_name, **parse_judge_response(response.choices[0].message.content, verdicts)}
     except Exception as error:
-        logging.error(f"Error parsing judge {judge_name} response, defaulting to uphold: {error}")
-        return {'name': judge_name, 'verdict': 'uphold', 'reason': 'parse_error'}
+        logging.error(f"Error parsing judge {judge_name} response, defaulting to {default}: {error}")
+        return {'name': judge_name, 'verdict': default, 'reason': 'parse_error'}
 
 
 def judge_decision(openai_client, message_text: str, classifier_reason: str, notify_operational_error: Callable[[Exception, str], None], image_data_uris: List[str] = None) -> Dict:
@@ -127,6 +134,13 @@ def judge_decision(openai_client, message_text: str, classifier_reason: str, not
     votes = [_run_judge(openai_client, judge, prompt_text, user_content, notify_operational_error) for judge in Config.JUDGE_SYSTEM_PROMPTS]
     verdict = 'overturn' if sum(vote['verdict'] == 'overturn' for vote in votes) >= 3 else 'uphold'
     return {'verdict': verdict, 'reason': '; '.join(f"{vote['name']}={vote['verdict']}:{vote['reason']}" for vote in votes), 'votes': votes}
+
+
+def rescue_decision(openai_client, message_text: str, classifier_reason: str, notify_operational_error: Callable[[Exception, str], None], image_data_uris: List[str] = None) -> Dict:
+    """Second look at a classifier rejection; defaults to 'confirm' so an outage cannot flood the alert channel."""
+    prompt_text = Config.RESCUE_JUDGE_USER_PROMPT_TEMPLATE.format(message_text=message_text, classifier_reason=classifier_reason)
+    user_content = _user_content(prompt_text, image_data_uris)
+    return _run_judge(openai_client, Config.RESCUE_JUDGE, prompt_text, user_content, notify_operational_error, _RESCUE_VERDICTS)
 
 
 def format_judge_votes(votes: List[Dict]) -> str:
