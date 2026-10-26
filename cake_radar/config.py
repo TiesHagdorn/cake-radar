@@ -107,6 +107,25 @@ class Config:
         "Respond only as JSON with keys verdict and reason. Verdict must be 'uphold' or 'overturn'."
     )
 
+    RESCUE_JUDGE = {
+        "name": "rescue",
+        "prompt": (
+            "Cake Radar alerts colleagues when edible food or drink is likely available to share "
+            "in the Amsterdam office. The classifier did NOT find this message alert-worthy. "
+            "Your role is only to catch treats it missed. Rescue if the author announces edible "
+            "food or drink that is available to share now or today, even when that announcement "
+            "is part of a longer work update or celebration (e.g. 'to celebrate, there's cake at "
+            "your work location today, go grab a slice'). Otherwise confirm, and keep confirming "
+            "future events, invitations, birthday or congrats messages aimed at someone else, "
+            "non-food items, idioms, and private food."
+        ),
+    }
+    RESCUE_JUDGE_USER_PROMPT_TEMPLATE = (
+        "The classifier said NO with reason: '{classifier_reason}'.\n\n"
+        "Message: '{message_text}'\n\n"
+        "Respond only as JSON with keys verdict and reason. Verdict must be 'rescue' or 'confirm'."
+    )
+
     # Keywords
     KEYWORDS = []
     
