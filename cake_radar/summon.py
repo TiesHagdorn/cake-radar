@@ -7,6 +7,7 @@ import re
 from threading import Lock
 import time
 from typing import Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from . import message_processor as mp
@@ -166,27 +167,98 @@ def run_summon(channel_id: str, mention_ts: str, thread_ts: str = '', user_id: s
         _react(channel_id, mention_ts, Config.SUMMON_FAILURE_REACTION)
         return
 
-    if not mp.claim_forward(channel_id, best['ts']):
-        logging.info(f"{log_prefix} | ALREADY_FORWARDED | ts={best['ts']} | {log_suffix}")
-        _react(channel_id, mention_ts, Config.SUMMON_SUCCESS_REACTION)
-        return
+    posted = _cross_post(channel_id, best, best_result, f" · summoned by {mp._user_name(user_id)}" if user_id else '',
+                         log_prefix, log_suffix)
+    _react(channel_id, mention_ts, Config.SUMMON_SUCCESS_REACTION if posted else Config.SUMMON_FAILURE_REACTION)
+
+
+def _cross_post(channel_id: str, message: Dict, result: Dict, suffix: str, log_prefix: str, log_suffix: str) -> bool:
+    """Post an alert for a reported message; True when it is on the alert channel, new or already."""
+    if not mp.claim_forward(channel_id, message['ts']):
+        logging.info(f"{log_prefix} | ALREADY_FORWARDED | ts={message['ts']} | {log_suffix}")
+        return True
 
     posted = mp._send_slack_alert(
         _client().chat_postMessage,
         channel_id,
-        best['ts'],
-        best_result['total_certainty'],
-        thread_ts=best.get('thread_ts', ''),
-        suffix=f" · summoned by {mp._user_name(user_id)}" if user_id else '',
+        message['ts'],
+        result['total_certainty'],
+        thread_ts=message.get('thread_ts', ''),
+        suffix=suffix,
     )
     if not posted:
-        mp.release_forward(channel_id, best['ts'])
-    flat_text = ' '.join(best.get('text', '').split())
+        mp.release_forward(channel_id, message['ts'])
+    flat_text = ' '.join(message.get('text', '').split())
     logging.info(
-        f"{log_prefix} | {'FORWARDED' if posted else 'ERROR'} | AI={best_result['decision']} "
-        f"{best_result['total_certainty']}% | reason={best_result.get('reason', '')} | {log_suffix} | \"{flat_text}\""
+        f"{log_prefix} | {'FORWARDED' if posted else 'ERROR'} | AI={result['decision']} "
+        f"{result['total_certainty']}% | reason={result.get('reason', '')} | {log_suffix} | \"{flat_text}\""
     )
-    _react(channel_id, mention_ts, Config.SUMMON_SUCCESS_REACTION if posted else Config.SUMMON_FAILURE_REACTION)
+    return posted
+
+
+def _forwarded_message(message: Dict) -> Optional[Dict]:
+    """The message a colleague forwarded (or linked) into a DM with the bot."""
+    for attachment in message.get('attachments', []):
+        if not (attachment.get('is_share') or attachment.get('is_msg_unfurl')):
+            continue
+        if not attachment.get('channel_id') or not attachment.get('ts'):
+            continue
+        thread_ts = parse_qs(urlparse(attachment.get('from_url', '')).query).get('thread_ts', [''])[0]
+        return {
+            'channel_id': attachment['channel_id'],
+            'ts': str(attachment['ts']),
+            'thread_ts': thread_ts,
+            'text': attachment.get('text', ''),
+            'files': attachment.get('files', []),
+        }
+    return None
+
+
+def handle_direct_message(message, say):
+    """Cross-post a treat message a colleague forwarded to the bot by DM, and reply in the DM."""
+    if message.get('bot_id') or not _claim_mention(message.get('channel', ''), message.get('ts', '')):
+        return
+
+    forwarded = _forwarded_message(message)
+    if forwarded is None:
+        say(text="Forward me a treat message I missed and I'll take a look :cake-radar:")
+        return
+
+    channel_id = forwarded['channel_id']
+    user_id = message.get('user', '')
+    log_prefix = "SUMMON (dm)"
+    log_suffix = f"{mp._fmt_ts(forwarded['ts'])} | {mp._channel_name(channel_id)} | {mp._user_name(user_id)}"
+
+    if channel_id == Config.CAKE_RADAR_CHANNEL_ID or find_already_alerted(channel_id, [forwarded]):
+        logging.info(f"{log_prefix} | ALREADY_FORWARDED | ts={forwarded['ts']} | {log_suffix}")
+        say(text="That one is already on the radar :cake-radar:")
+        return
+
+    if not _channel_is_public(channel_id):
+        logging.info(f"{log_prefix} | SKIPPED_PRIVATE_SOURCE | {log_suffix}")
+        say(text="I only cross-post treats from public channels, so I left this one alone.")
+        return
+
+    # The forward is the strong hint, so no cake-word check: it may be why the treat was missed
+    result = mp.assess_certainty(
+        forwarded['text'].lower(),
+        mp.download_slack_images(forwarded['files']),
+        extra_context=Config.SUMMON_DM_PROMPT_HINT,
+    )
+    if result.get('decision') == 'error':
+        say(text="Something is wrong on my end, please try again later.")
+        return
+    if result.get('decision') != 'yes' or result.get('total_certainty', 0) <= Config.SUMMON_CERTAINTY_THRESHOLD:
+        logging.info(f"{log_prefix} | NOT_FORWARDED | AI={result.get('decision')} {result.get('total_certainty', 0)}% | "
+                     f"reason={result.get('reason', '')} | {log_suffix}")
+        reason = f" ({result['reason']})" if result.get('reason') else ''
+        say(text=f"Thanks, but I don't think that's a treat offering{reason}, so I didn't cross-post it.")
+        return
+
+    if _cross_post(channel_id, forwarded, result, f" · reported by {mp._user_name(user_id)}", log_prefix, log_suffix):
+        say(text=f"Thanks! It's on {Config.ALERT_CHANNEL} now :cake-radar:")
+    else:
+        say(text="I couldn't post it, please try again later.")
 
 
 def find_pending_mentions(channel_id: str) -> List[Dict]:

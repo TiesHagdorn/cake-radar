@@ -30,6 +30,8 @@ Cake Radar only sees channels it has been added to. If it missed a treat, tag `@
 - It reacts :cake-radar: when the treat is on the alert channel (new or already posted), and :x: when it finds no treat.
 - Adding Cake Radar to a channel without tagging it never posts old messages. Private channels are never cross-posted.
 
+You can also forward a missed treat message to Cake Radar in a DM. It checks that one message with the same lower bar, without needing cake words, and replies in the DM whether it cross-posted it. This needs the `message.im` bot event and the `im:history` scope.
+
 ## Code map
 
 One Slack message follows this route:
@@ -38,7 +40,7 @@ One Slack message follows this route:
 
 - `app.py`: starts the web app and connects Slack events to Cake Radar.
 - `message_processor.py`: the complete decision path for a Slack message.
-- `summon.py`: handles tags of Cake Radar and the catch-up after it is invited to a channel.
+- `summon.py`: handles tags of Cake Radar, the catch-up after it is invited to a channel, and treats forwarded to it by DM.
 - `ai_classifier.py`: OpenAI classifier and judge-panel calls.
 - `config.py`: environment settings and prompts.
 - `keywords.json`: the cake and snack words Cake Radar recognises.

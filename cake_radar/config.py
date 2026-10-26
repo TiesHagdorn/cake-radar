@@ -45,6 +45,12 @@ class Config:
         "celebrating (e.g. their birthday or their special day) that mentions cake or treats counts as "
         "an offering. Only answer 'no' if the message clearly has nothing to do with available food."
     )
+    SUMMON_DM_PROMPT_HINT = (
+        "Context: a colleague forwarded this message to Cake Radar by DM because they believe it offers "
+        "an edible treat that Cake Radar missed. Treat that as strong evidence. A message from the person "
+        "celebrating (e.g. their birthday or their special day) that mentions cake or treats counts as "
+        "an offering. Only answer 'no' if the message clearly has nothing to do with available food."
+    )
 
     # App Settings
     PORT = int(os.getenv("PORT", 3000))
