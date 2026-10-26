@@ -221,7 +221,7 @@ def handle_direct_message(message, say):
 
     forwarded = _forwarded_message(message)
     if forwarded is None:
-        say(text="Forward me a treat message I missed and I'll take a look :cake-radar:")
+        say(text=f"Forward me a treat message, I'll take a look if it's about a treat and if it hasn't been posted yet, I'll send it to {Config.ALERT_CHANNEL}")
         return
 
     channel_id = forwarded['channel_id']
