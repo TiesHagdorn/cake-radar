@@ -27,8 +27,8 @@ class Config:
     OPERATIONAL_ALERT_SUPPORT_MENTION = os.getenv("OPERATIONAL_ALERT_SUPPORT_MENTION", "")
 
     # AI Settings
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-nano")
-    JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gpt-5.4")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
+    JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gpt-6.1-sol")
     CERTAINTY_THRESHOLD = int(os.getenv("CERTAINTY_THRESHOLD", "85"))
 
     # Summon (tagging Cake Radar to cross-post a treat it missed)
