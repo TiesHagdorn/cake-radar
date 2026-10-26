@@ -127,8 +127,15 @@ def main():
             print(f"Reason: {result['judge']['reason']}")
             print("\n--- Final ---")
             print(f"{'✅ FORWARD' if result['forwarded'] else '🚫 SUPPRESS'}")
+        elif result['rescue']:
+            print("\n🔎 Classifier rejected — running rescue judge...")
+            print("\n--- Rescue Judge Result ---")
+            print(f"Verdict: {result['rescue']['verdict'].upper()}")
+            print(f"Reason: {result['rescue']['reason']}")
+            print("\n--- Final ---")
+            print(f"{'✅ FORWARD' if result['forwarded'] else '🚫 SUPPRESS'}")
         else:
-            print("\n(Classifier below threshold — judge not run.)")
+            print("\n(Classifier errored — judges not run.)")
 
     if args.test:
         print_assessment(args.test)

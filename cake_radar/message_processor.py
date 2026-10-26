@@ -7,7 +7,7 @@ import io
 import logging
 import re
 from threading import Lock
-from typing import Dict, List
+from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import requests
@@ -198,6 +198,10 @@ def judge_decision(message_text: str, classifier_reason: str, image_data_uris: L
     return ai_classifier.judge_decision(_openai_client, message_text, classifier_reason, notify_openai_operational_error, image_data_uris)
 
 
+def rescue_decision(message_text: str, classifier_reason: str, image_data_uris: List[str] = None) -> Dict:
+    return ai_classifier.rescue_decision(_openai_client, message_text, classifier_reason, notify_openai_operational_error, image_data_uris)
+
+
 def assess_message(text: str) -> Dict:
     """Assess one message without sending a Slack alert; used by the CLI."""
     matched_keywords = find_cake_words(text)
@@ -206,12 +210,14 @@ def assess_message(text: str) -> Dict:
     result = assess_certainty(text)
     classifier_forwarded = result['decision'] == 'yes' and result['total_certainty'] > Config.CERTAINTY_THRESHOLD
     judge = judge_decision(text, result.get('reason', '')) if classifier_forwarded else None
+    rescue = rescue_decision(text, result.get('reason', '')) if not classifier_forwarded and result['decision'] != 'error' else None
     return {
         **result,
         'matched_keywords': matched_keywords,
         'classifier_forwarded': classifier_forwarded,
         'judge': judge,
-        'forwarded': classifier_forwarded and judge['verdict'] != 'overturn' if judge else False,
+        'rescue': rescue,
+        'forwarded': judge['verdict'] != 'overturn' if judge else bool(rescue and rescue['verdict'] == 'rescue'),
     }
 
 
@@ -252,12 +258,14 @@ def was_forwarded(channel_id: str, ts: str) -> bool:
         return bool(state and state['forwarded'])
 
 
-def _send_slack_alert(say, channel_id: str, ts: str, certainty: int, thread_ts: str = '', suffix: str = '') -> bool:
+def _send_slack_alert(say, channel_id: str, ts: str, certainty: Optional[int], thread_ts: str = '', suffix: str = '') -> bool:
     url = f"https://slack.com/archives/{channel_id}/p{ts.replace('.', '')}"
     if thread_ts and thread_ts != ts:
         url += f"?thread_ts={thread_ts}&cid={channel_id}"
+    # A rescued message has no 'yes' certainty: the classifier's score was for 'no'
+    certainty_info = "caught on second look" if certainty is None else f"{certainty}% certainty"
     try:
-        say(channel=Config.ALERT_CHANNEL, text=f":cake-radar: *<{url}|Cake detected!>* ({certainty}% certainty){suffix}")
+        say(channel=Config.ALERT_CHANNEL, text=f":cake-radar: *<{url}|Cake detected!>* ({certainty_info}){suffix}")
     except Exception as error:
         logging.error(f"Error sending message to {Config.ALERT_CHANNEL}: {error}")
         return False
@@ -282,8 +290,15 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
         judge_verdict = judge['verdict']
         judge_reason = judge['reason']
         judge_votes = judge.get('votes', [])
-    forwarded = classifier_forwarded and judge_verdict != 'overturn'
-    judge_part = f" | judge_panel={judge_verdict}" if judge_verdict else ''
+    elif decision != 'error':
+        # Every keyword-matched rejection gets a second look to catch missed treats
+        rescue = rescue_decision(original_text, reason, image_data_uris)
+        judge_verdict = rescue['verdict']
+        judge_reason = rescue['reason']
+    rescued = judge_verdict == 'rescue'
+    forwarded = (classifier_forwarded and judge_verdict != 'overturn') or rescued
+    judge_label = 'rescue_judge' if judge_verdict in ('rescue', 'confirm') else 'judge_panel'
+    judge_part = f" | {judge_label}={judge_verdict}" if judge_verdict else ''
     if judge_votes:
         judge_part += f" | judge_votes=[{ai_classifier.format_judge_votes(judge_votes)}]"
     elif judge_reason:
@@ -297,7 +312,7 @@ def evaluate_message(original_text: str, channel_id: str, ts: str, files: list, 
         f'{_user_name(user_id)} | "{" ".join(original_text.split())}"'
     )
     if forwarded:
-        _send_slack_alert(say, channel_id, ts, total_certainty)
+        _send_slack_alert(say, channel_id, ts, None if rescued else total_certainty)
     return forwarded
 
 

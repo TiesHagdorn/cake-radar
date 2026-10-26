@@ -17,7 +17,9 @@ If the classifier is confident, four judges review the candidate from different 
 
 Cake Radar only suppresses an alert when at least three judges agree it is a false alarm. Informal sightings still count, so "cake at the entrance" should be enough.
 
-Logs include the classifier result, the final judge-panel outcome, and each judge's vote with its reason.
+If the classifier rejects a message that matched a treat word, a rescue judge takes a second look. It can still send the alert, for example when a long work update says there is cake at every location today. These alerts say "caught on second look" instead of a certainty.
+
+Logs include the classifier result, the final judge-panel or rescue-judge outcome, and each judge's vote with its reason.
 
 ## Summoning Cake Radar
 

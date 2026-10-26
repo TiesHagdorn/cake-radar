@@ -475,3 +475,66 @@ class TestDeduplication(unittest.TestCase):
         self.assertIn("false_positive=overturn (no explicit offer)", log_output)
         self.assertIn("social_context=uphold (informal sighting)", log_output)
         self.assertIn("hungry=uphold (worth knowing)", log_output)
+
+    @patch('cake_radar.message_processor.rescue_decision')
+    @patch('cake_radar.message_processor.assess_certainty')
+    def test_rejection_rescued_by_judge_is_forwarded(self, mock_assess, mock_rescue):
+        """A classifier 'no' that the rescue judge overrules should still alert."""
+        mock_say = MagicMock()
+        mock_assess.return_value = {'decision': 'no', 'total_certainty': 88, 'reason': 'work announcement',
+                                    'prompt_tokens': 10, 'completion_tokens': 5}
+        mock_rescue.return_value = {'name': 'rescue', 'verdict': 'rescue', 'reason': 'cake available today'}
+
+        msg = {'text': "To celebrate, there's cake at your work location today!", 'channel': 'C1', 'ts': '5000.00'}
+        cake_radar.handle_message(msg, mock_say)
+
+        mock_rescue.assert_called_once()
+        mock_say.assert_called_once()
+        alert_text = mock_say.call_args.kwargs['text']
+        self.assertIn('caught on second look', alert_text)
+        self.assertNotIn('88%', alert_text)
+
+    @patch('cake_radar.message_processor.judge_decision')
+    @patch('cake_radar.message_processor.rescue_decision')
+    @patch('cake_radar.message_processor.assess_certainty')
+    def test_rejection_confirmed_by_judge_is_not_forwarded(self, mock_assess, mock_rescue, mock_judge):
+        """A low-certainty 'yes' goes to the rescue judge, not the panel; a confirm keeps it suppressed."""
+        mock_say = MagicMock()
+        mock_assess.return_value = {'decision': 'yes', 'total_certainty': 60, 'reason': 'maybe cake',
+                                    'prompt_tokens': 10, 'completion_tokens': 5}
+        mock_rescue.return_value = {'name': 'rescue', 'verdict': 'confirm', 'reason': 'future event'}
+
+        with self.assertLogs(level='INFO') as logs:
+            cake_radar.handle_message({'text': 'cake party next week', 'channel': 'C1', 'ts': '5001.00'}, mock_say)
+
+        mock_rescue.assert_called_once()
+        mock_judge.assert_not_called()
+        mock_say.assert_not_called()
+        self.assertIn('rescue_judge=confirm', '\n'.join(logs.output))
+
+    @patch('cake_radar.message_processor.judge_decision')
+    @patch('cake_radar.message_processor.rescue_decision')
+    @patch('cake_radar.message_processor.assess_certainty')
+    def test_classifier_error_skips_all_judges(self, mock_assess, mock_rescue, mock_judge):
+        """An OpenAI operational error should not trigger any judge call."""
+        mock_say = MagicMock()
+        mock_assess.return_value = {'decision': 'error', 'total_certainty': 0, 'reason': 'auth',
+                                    'prompt_tokens': 0, 'completion_tokens': 0}
+
+        cake_radar.handle_message({'text': 'cake in the kitchen', 'channel': 'C1', 'ts': '5002.00'}, mock_say)
+
+        mock_rescue.assert_not_called()
+        mock_judge.assert_not_called()
+        mock_say.assert_not_called()
+
+    @patch('cake_radar.message_processor._openai_client')
+    def test_rescue_judge_defaults_to_confirm_on_unexpected_verdict(self, mock_client):
+        """A panel-style or garbled verdict from the rescue judge must not turn into an alert."""
+        response = MagicMock()
+        response.choices[0].message.content = '{"verdict": "uphold", "reason": "looks fine"}'
+        mock_client.chat.completions.create.return_value = response
+
+        result = cake_radar.rescue_decision('cake', 'no treat')
+
+        self.assertEqual(result['verdict'], 'confirm')
+        self.assertEqual(mock_client.chat.completions.create.call_args.kwargs['response_format'], {"type": "json_object"})
