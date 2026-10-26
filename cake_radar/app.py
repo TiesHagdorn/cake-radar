@@ -78,8 +78,16 @@ def ensure_initialized():
     return app, client, handler
 
 
+def handle_message(message, say):
+    # DMs to the bot are reports of missed treats, never treats themselves
+    if message.get('channel_type') == 'im':
+        summon.handle_direct_message(message, say)
+    else:
+        message_processor.handle_message(message, say)
+
+
 def register_handlers(slack_app):
-    slack_app.message()(message_processor.handle_message)
+    slack_app.message()(handle_message)
     slack_app.event("message")(message_processor.handle_message_events)
     slack_app.event("app_mention")(summon.handle_app_mention)
     slack_app.event("member_joined_channel")(summon.handle_member_joined)

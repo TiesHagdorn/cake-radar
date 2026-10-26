@@ -237,5 +237,82 @@ class TestJoinCatchUp(SummonTestCase):
         self.assertEqual(self.alerts(), [])
 
 
+class TestDirectMessage(SummonTestCase):
+
+    def forward(self, text='leftover brownies on 3rd floor', channel=CHANNEL, ts='100.000001', from_url='', dm_ts='200.000001'):
+        say = MagicMock()
+        summon.handle_direct_message({
+            'channel': 'DREPORTER', 'channel_type': 'im', 'ts': dm_ts, 'user': 'UREPORTER',
+            'attachments': [{'is_share': True, 'channel_id': channel, 'ts': ts, 'text': text, 'from_url': from_url}],
+        }, say)
+        return say.call_args.kwargs['text']
+
+    @patch('cake_radar.message_processor.judge_decision')
+    @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
+    def test_forward_crossposts_without_cake_words(self, mock_assess, mock_judge):
+        reply = self.forward(text='come grab something sweet at my desk')
+
+        self.assertEqual(mock_assess.call_args.kwargs['extra_context'], summon.Config.SUMMON_DM_PROMPT_HINT)
+        mock_judge.assert_not_called()
+        self.assertEqual(len(self.alerts()), 1)
+        self.assertIn('/p100000001', self.alerts()[0]['text'])
+        self.assertIn('reported by @ties', self.alerts()[0]['text'])
+        self.assertIn("It's on", reply)
+        self.assertTrue(message_processor.was_forwarded(CHANNEL, '100.000001'))
+
+    @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
+    def test_forwarded_thread_reply_links_to_reply(self, mock_assess):
+        self.forward(ts='101.000001', from_url=f'https://x.slack.com/archives/{CHANNEL}/p101000001?thread_ts=100.000001&cid={CHANNEL}')
+
+        self.assertIn(f'/p101000001?thread_ts=100.000001&cid={CHANNEL}', self.alerts()[0]['text'])
+
+    @patch('cake_radar.message_processor.assess_certainty', return_value=NO)
+    def test_rejected_forward_replies_with_reason(self, mock_assess):
+        reply = self.forward()
+
+        self.assertEqual(self.alerts(), [])
+        self.assertIn('no food', reply)
+
+    @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
+    def test_already_alerted_forward_is_not_reposted(self, mock_assess):
+        self.alert_history = [{'text': f':cake-radar: *<https://slack.com/archives/{CHANNEL}/p100000001|Cake detected!>*'}]
+        reply = self.forward()
+
+        mock_assess.assert_not_called()
+        self.assertEqual(self.alerts(), [])
+        self.assertIn('already on the radar', reply)
+
+    @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
+    def test_private_source_is_not_crossposted(self, mock_assess):
+        self.private_channels.add('GPRIVATE')
+        reply = self.forward(channel='GPRIVATE')
+
+        mock_assess.assert_not_called()
+        self.assertEqual(self.alerts(), [])
+        self.assertIn('public channels', reply)
+
+    @patch('cake_radar.message_processor.assess_certainty', return_value=YES)
+    def test_plain_dm_gets_help_and_retry_is_ignored(self, mock_assess):
+        say = MagicMock()
+        dm = {'channel': 'DREPORTER', 'channel_type': 'im', 'ts': '300.000001', 'user': 'UREPORTER', 'text': 'cake!'}
+        summon.handle_direct_message(dm, say)
+        summon.handle_direct_message(dm, say)
+
+        mock_assess.assert_not_called()
+        self.assertEqual(self.alerts(), [])
+        say.assert_called_once()
+        self.assertIn('Forward me', say.call_args.kwargs['text'])
+
+    @patch('cake_radar.summon.handle_direct_message')
+    @patch('cake_radar.message_processor.handle_message')
+    def test_app_routes_dms_to_summon(self, mock_live, mock_dm):
+        from cake_radar import app
+        app.handle_message({'channel': 'DREPORTER', 'channel_type': 'im', 'ts': '1.0'}, MagicMock())
+        app.handle_message({'channel': CHANNEL, 'channel_type': 'channel', 'ts': '1.0'}, MagicMock())
+
+        mock_dm.assert_called_once()
+        mock_live.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()
